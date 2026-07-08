@@ -1,22 +1,26 @@
 # CLAUDE.md
 
-Zasady obowiązujące w tym repozytorium.
+Rules for this repository.
 
-## Zasady pracy
+## Communication
 
-- **Think Before Coding** — Nie zakładaj. Nie ukrywaj wątpliwości. Nazywaj kompromisy (tradeoffs) wprost.
-- **Simplicity First** — Minimum kodu, które rozwiązuje problem. Nic spekulatywnego.
-- **Surgical Changes** — Dotykaj tylko tego, co musisz. Sprzątaj tylko własny bałagan.
-- **Goal-Driven Execution** — Zdefiniuj kryteria sukcesu. Iteruj, aż zweryfikowane.
+- **Always communicate in the user's language**, but **everything is written in English** (code, comments, docs, commit messages, file contents).
 
-## Zasady kodowania
+## Working principles
 
-- **KISS** — najprostsza rzecz, która działa.
-- **YAGNI** — nie buduj tego, o co nie proszono.
-- **SRP** — jeden powód do zmiany na jednostkę.
-- **DRY** — jedno źródło prawdy; nie duplikuj logiki.
+- **Think Before Coding** — Don't assume. Don't hide confusion. Surface tradeoffs.
+- **Simplicity First** — Minimum code that solves the problem. Nothing speculative.
+- **Surgical Changes** — Touch only what you must. Clean up only your own mess.
+- **Goal-Driven Execution** — Define success criteria. Loop until verified.
 
-## Zasady wykonania
+## Coding principles
 
-- **Research w internecie zawsze robimy za pomocą subagenta — nigdy bezpośrednio.**
-- **Kodujemy zawsze subagentem, przekazując mu zasady z góry** (zasady z tego pliku).
+- **KISS** — the simplest thing that works.
+- **YAGNI** — don't build what isn't asked for.
+- **SRP** — one reason to change per unit.
+- **DRY** — one source of truth; don't duplicate logic.
+
+## Execution principles
+
+- **Internet research is always done via a subagent — never directly.**
+- **Coding is always done via a subagent, passing it the rules from above** (the rules in this file).
