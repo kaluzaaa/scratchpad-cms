@@ -99,8 +99,43 @@ export const initialState = (): Episode => ({ status: "NotCreated" });
 ////////// Evolve
 /////////////////////////////////////////
 
-export const evolve = (_state: Episode, _event: EpisodeEvent): Episode => {
-  throw new Error("Not implemented");
+export const evolve = (state: Episode, event: EpisodeEvent): Episode => {
+  const { type, data } = event;
+
+  switch (type) {
+    case "EpisodeCreated":
+      return {
+        status: "Created",
+        ...data,
+        is_published: false,
+        transcript_reviewed: false,
+      };
+    case "EpisodeContentUpdated":
+    case "EpisodeDistributionUpdated": {
+      if (state.status !== "Created") return state;
+
+      // Event data carries only the changed keys, so a shallow merge suffices.
+      return { ...state, ...data };
+    }
+    case "TranscriptReviewed": {
+      if (state.status !== "Created") return state;
+
+      return { ...state, transcript_reviewed: true };
+    }
+    case "EpisodePublished": {
+      if (state.status !== "Created") return state;
+
+      return {
+        ...state,
+        is_published: true,
+        last_published_at: data.published_at,
+      };
+    }
+    default: {
+      const _notExistingEventType: never = type;
+      return state;
+    }
+  }
 };
 
 /////////////////////////////////////////
