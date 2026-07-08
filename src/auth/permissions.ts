@@ -19,9 +19,11 @@ export const isKnownPodcast = (id: string): id is PodcastId =>
 export const isKnownUser = (user: string): boolean => user in permissions;
 
 export const canAccess = (
-  _user: string,
-  _podcastId: PodcastId,
-  _level: AccessLevel,
+  user: string,
+  podcastId: PodcastId,
+  level: AccessLevel,
 ): boolean => {
-  throw new Error("Not implemented");
+  const grant = permissions[user]?.[podcastId];
+  if (grant === undefined) return false;
+  return grant === "RW" || level === "RO";
 };
