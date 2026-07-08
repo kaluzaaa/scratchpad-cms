@@ -22,6 +22,7 @@ import {
   evolve,
   initialState,
 } from "./episode";
+import { buildHistory } from "./history";
 
 type AppEnv = { Bindings: Env; Variables: Variables };
 type AppContext = Context<AppEnv>;
@@ -238,6 +239,23 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
 
       c.header("ETag", toWeakETag(currentStreamVersion));
       return c.json(state, 200);
+    },
+  );
+
+  router.get(
+    "/podcasts/:podcastId/episodes/:episodeNumber/history",
+    requireAccess("RO"),
+    async (c) => {
+      const streamId = episodeStreamIdFromParams(c);
+
+      const { events, streamExists } = await c
+        .get("eventStore")
+        .readStream<EpisodeEvent>(streamId);
+
+      if (!streamExists || events.length === 0)
+        throw new NotFoundError({ id: streamId, type: "Episode" });
+
+      return c.json({ stream_id: streamId, entries: buildHistory(events) });
     },
   );
 };
