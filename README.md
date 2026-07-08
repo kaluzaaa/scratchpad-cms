@@ -2,7 +2,12 @@
 
 A demo API for managing podcast episodes, built as an event-sourced "hello world" with [Emmett](https://github.com/event-driven-io/emmett)'s decider pattern. The event store runs on Cloudflare D1 (`d1EventStoreDriver` from `@event-driven-io/emmett-sqlite/cloudflare`), HTTP via [Hono](https://hono.dev), executed in workerd through `wrangler dev` (local D1 persisted as SQLite under `.wrangler/state/`). The same code deploys unchanged to Cloudflare Workers + D1.
 
-**Why event sourcing?** Every change to an episode is stored as an immutable business event with metadata (who, why, when), so the full audit history falls out for free (`GET .../history`) and read models are just projections of the log. Crucially, events are grouped **by business operation**, not per field (`TitleChanged`, `IntroChanged`, ...) and not as one `EpisodeUpdated` blob — see [property sourcing](https://event-driven.io/en/property-sourcing/) for why per-field events are an anti-pattern.
+## Plans
+
+| Plan | Delivered |
+|---|---|
+| [01 — Podcast CMS on Emmett + D1](docs/plan/01-podcast-cms-emmett-d1.md) | The event-sourced podcast CMS demo: Emmett event store on Cloudflare D1, Hono API with five business-grouped events, BDD red-green TDD, `X-User` header auth, audit history endpoint, and a list read model. |
+| [02 — Idiomatic Hono auth errors](docs/plan/02-idiomatic-hono-auth-errors.md) | Refactored the auth middleware error paths to the Hono idiom — thrown `HTTPException`s — and unified all error responses as RFC 7807 `problem+json` via a shared `onError` handler. |
 
 ## Event catalog
 
@@ -26,21 +31,13 @@ Requires Node.js v24+.
 
 ```bash
 npm install
-git config core.hooksPath .githooks   # required once per fresh clone (see Tooling)
+git config core.hooksPath .githooks   # activates the non-blocking pre-commit feedback hook (build/test/lint)
 
 npm run dev     # wrangler dev -> http://localhost:8787
 npm test        # BDD decider + auth middleware specs (node --import tsx --test)
 npm run build   # tsc --noEmit + wrangler deploy --dry-run (proves the Worker bundles)
 npm run lint    # biome check .
 ```
-
-> Note: in the development environment this repo was built in, port 8787 is occupied by an unrelated daemon — use `npx wrangler dev --port 8788` there (and adjust the curl examples accordingly).
-
-## Tooling notes
-
-- **Red-green TDD flow.** The decider and auth middleware were built as RED commits (failing `DeciderSpecification` / `app.request()` specs) followed by GREEN implementation commits. 31 tests, all green on `master`.
-- **Biome as a Claude Code hook.** `.claude/settings.json` registers a PostToolUse hook (`scripts/biome-hook.sh`) that runs `biome check --write` on every `.ts` file edited by the agent.
-- **Non-blocking pre-commit hook.** `.githooks/pre-commit` runs `npm run build`, `npm test`, `npm run lint` and prints a PASS/FAIL summary, but **always exits 0** — intentional red-phase commits are allowed; any other commit should show ALL PASS. Git does not track `core.hooksPath`, so `git config core.hooksPath .githooks` **must be run once in every fresh clone** to activate it.
 
 ## Auth (demo only — header-based identity, no real auth)
 
@@ -163,20 +160,3 @@ The `episodes_list` table (backing `GET /podcasts/:p/episodes`) is an **inline p
 ```bash
 rm -rf .wrangler/state
 ```
-
-## Future deploy (not done in this repo)
-
-The exact same code runs on real Cloudflare Workers + D1:
-
-1. Create a real D1 database (`npx wrangler d1 create podcast-cms`) and put its `database_id` into `wrangler.jsonc` (currently a local-dev placeholder).
-2. `npx wrangler deploy`.
-3. Migrations: the store runs `schema.migrate()` lazily on the first request per isolate (`autoMigration: 'None'` + explicit migrate in `src/eventStore.ts`), which also creates the projection table. For production you may prefer to pre-generate the `emt_*` DDL (plus `episodes_list`) and apply it via `wrangler d1 migrations` instead of first-request migration.
-
-## Notable implementation deviations
-
-Full log in `docs/plan/01-podcast-cms-emmett-d1.md` (Deviations log). Highlights:
-
-- **`wrangler` pinned to `~4.107.1`** — `wrangler@4.108.0` moved to `@cloudflare/workers-types@^5`, while the pinned emmett beta peer-requires `^4.x`; 4.107.1 is the last wrangler on the 4.x types line.
-- **`pg`/`sqlite3` stub aliases in `wrangler.jsonc`** — the emmett-sqlite barrel transitively references these optional native drivers; with the D1 driver those code paths never execute, so they are aliased to an empty stub module to make the Worker bundle.
-- **409 instead of 412 on version conflicts** — emmett's default maps concurrency errors to 412; the duplicate-create contract here is 409, remapped in the app-level `onError`.
-- **`COALESCE` projection update** — `EpisodeContentUpdated` maps to a single `UPDATE ... SET title = COALESCE(?, title), episode_date = COALESCE(?, episode_date)`, so patches that touch neither listed column still emit exactly one statement (avoids `batch([])` on D1).
