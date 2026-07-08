@@ -1,4 +1,5 @@
 import { createMiddleware } from "hono/factory";
+import { HTTPException } from "hono/http-exception";
 import {
   type AccessLevel,
   canAccess,
@@ -20,21 +21,22 @@ export type AuthEnv = { Variables: AuthVariables };
 //   unknown podcast -> 404; missing/unknown X-User -> 401;
 //   no grant or RO user on RW route -> 403;
 //   success -> sets `user` (and `reason` from X-Reason, if present), calls next.
-// Error responses are JSON: { error: string }.
+// Errors are thrown as HTTPException and rendered as RFC 7807 problem+json
+// by the shared onError handler (src/errors.ts).
 export const requireAccess = (level: AccessLevel) =>
   createMiddleware<AuthEnv>(async (c, next) => {
     const podcastId = c.req.param("podcastId") ?? "";
     if (!isKnownPodcast(podcastId)) {
-      return c.json({ error: "Unknown podcast" }, 404);
+      throw new HTTPException(404, { message: "Unknown podcast" });
     }
 
     const user = c.req.header("X-User");
     if (user === undefined || !isKnownUser(user)) {
-      return c.json({ error: "Unknown or missing user" }, 401);
+      throw new HTTPException(401, { message: "Unknown or missing user" });
     }
 
     if (!canAccess(user, podcastId, level)) {
-      return c.json({ error: "Access denied" }, 403);
+      throw new HTTPException(403, { message: "Access denied" });
     }
 
     c.set("user", user);
