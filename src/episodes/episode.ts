@@ -41,6 +41,31 @@ export type EpisodeDistributionFields = Partial<{
   discord_send: boolean;
 }>;
 
+// Runtime whitelists for API body filtering; `satisfies` keeps every entry a
+// valid key of the corresponding field type (shared single source of truth).
+export const EPISODE_CONTENT_FIELD_KEYS = [
+  "title",
+  "intro",
+  "transcript",
+  "episode_date",
+  "link_notes",
+  "newsletter",
+  "summarization",
+  "yt_chapters",
+  "meta_seo",
+  "duration_ms",
+] as const satisfies readonly (keyof EpisodeContentFields)[];
+
+export const EPISODE_DISTRIBUTION_FIELD_KEYS = [
+  "spotify_id",
+  "apple_url",
+  "youtube_id",
+  "spreaker_id",
+  "audio_url",
+  "teaser_video_url",
+  "discord_send",
+] as const satisfies readonly (keyof EpisodeDistributionFields)[];
+
 export type EpisodeCreated = Event<
   "EpisodeCreated",
   EpisodeCreationFields,

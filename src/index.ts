@@ -1,7 +1,10 @@
-import type { Event } from "@event-driven-io/emmett";
-import { OK } from "@event-driven-io/emmett-honojs";
+import { isExpectedVersionConflictError } from "@event-driven-io/emmett";
+import { defaultErrorToProblemDetailsMapping } from "@event-driven-io/emmett-honojs";
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { ProblemDocument } from "http-problem-details";
 import type { Env, Variables } from "./env";
+import { episodesApi } from "./episodes/api";
 import { getEventStore } from "./eventStore";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -11,30 +14,22 @@ app.use(async (c, next) => {
   await next();
 });
 
-// TEMPORARY probe (Task 2 de-risk spike, reverted in Task 8): appends a
-// HealthChecked event and aggregates the stream back to prove the full
-// append/aggregate cycle works on D1 inside workerd.
-type HealthChecked = Event<"HealthChecked", { checked_at: string }>;
+app.get("/health", (c) => c.json({ ok: true }));
 
-app.get("/health", async (c) => {
-  const eventStore = c.get("eventStore");
-  const streamId = "health-check";
+episodesApi(app);
 
-  await eventStore.appendToStream<HealthChecked>(streamId, [
-    { type: "HealthChecked", data: { checked_at: new Date().toISOString() } },
-  ]);
+// Problem-details error mapper (plan-pre-approved plain-Hono variant of the
+// emmett-honojs middleware). Emmett error codes already map 1:1 to the planned
+// statuses (ValidationError->400, IllegalStateError->403, NotFoundError->404),
+// except version conflicts, which the plan maps to 409 instead of emmett's 412.
+app.onError((error, c) => {
+  const problem = isExpectedVersionConflictError(error)
+    ? new ProblemDocument({ detail: error.message, status: 409 })
+    : defaultErrorToProblemDetailsMapping(error);
 
-  const { currentStreamVersion } = await eventStore.aggregateStream(streamId, {
-    evolve: (state: { count: number }, _event: HealthChecked) => ({
-      count: state.count + 1,
-    }),
-    initialState: () => ({ count: 0 }),
-  });
-
-  return OK({
-    context: c,
-    body: { ok: true, probe_stream_version: currentStreamVersion.toString() },
-  });
+  const response = c.json(problem, problem.status as ContentfulStatusCode);
+  response.headers.set("Content-Type", "application/problem+json");
+  return response;
 });
 
 export default app;
