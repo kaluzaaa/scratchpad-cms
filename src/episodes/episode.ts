@@ -171,3 +171,15 @@ export const episodeStreamId = (
   podcastId: string,
   episodeNumber: number,
 ): string => `episode-${podcastId}-${episodeNumber}`;
+
+// Inverse of episodeStreamId (podcast ids may contain dashes, the trailing
+// segment is always the episode number); used by the read-model projection.
+export const parseEpisodeStreamId = (
+  streamId: string,
+): { podcastId: string; episodeNumber: number } => {
+  const [, podcastId, episodeNumber] =
+    /^episode-(.+)-(\d+)$/.exec(streamId) ?? [];
+  if (podcastId === undefined || episodeNumber === undefined)
+    throw new Error(`Invalid episode stream id: '${streamId}'`);
+  return { podcastId, episodeNumber: Number(episodeNumber) };
+};

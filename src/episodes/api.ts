@@ -221,6 +221,23 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
   );
 
   router.get(
+    "/podcasts/:podcastId/episodes",
+    requireAccess("RO"),
+    async (c) => {
+      // Read model maintained by the inline episodes_list projection;
+      // queried straight from the D1 binding (no event store involved).
+      const { results } = await c.env.DB.prepare(
+        `SELECT stream_id, podcast_id, episode_number, title, episode_date, last_published_at
+         FROM episodes_list WHERE podcast_id = ?1 ORDER BY episode_number`,
+      )
+        .bind(c.req.param("podcastId") ?? "")
+        .all();
+
+      return c.json({ episodes: results }, 200);
+    },
+  );
+
+  router.get(
     "/podcasts/:podcastId/episodes/:episodeNumber",
     requireAccess("RO"),
     async (c) => {
