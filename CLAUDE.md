@@ -24,3 +24,9 @@ Rules for this repository.
 
 - **Internet research is always done via a subagent — never directly.**
 - **Coding is always done via a subagent, passing it the rules from above** (the rules in this file).
+
+## Planning
+
+- **Every plan is always saved to `docs/plan/XX-<slug>.md`** (`XX` = zero-padded sequence number, `<slug>` = kebab-case name).
+- **The end of every plan must always contain a checklist** of tasks to do, in the `- [ ]` format.
+- **Every task gets its own separate commit.** The coding subagent, before committing, marks the task as done in the checklist (`- [x]`) and commits everything for that one task together.
