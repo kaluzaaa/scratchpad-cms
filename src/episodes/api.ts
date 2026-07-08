@@ -1,5 +1,6 @@
 import {
   CommandHandler,
+  NotFoundError,
   STREAM_DOES_NOT_EXIST,
   ValidationError,
 } from "@event-driven-io/emmett";
@@ -11,9 +12,11 @@ import { decide, type EpisodeCommand } from "./businessLogic";
 import {
   EPISODE_CONTENT_FIELD_KEYS,
   EPISODE_DISTRIBUTION_FIELD_KEYS,
+  type Episode,
   type EpisodeContentFields,
   type EpisodeCreationFields,
   type EpisodeDistributionFields,
+  type EpisodeEvent,
   type EpisodeEventMetadata,
   episodeStreamId,
   evolve,
@@ -213,6 +216,28 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
         `publish: episode ${streamId} published_at ${metadata.now} by ${metadata.user} reason ${metadata.reason ?? "-"}`,
       );
       return c.body(null, 204);
+    },
+  );
+
+  router.get(
+    "/podcasts/:podcastId/episodes/:episodeNumber",
+    requireAccess("RO"),
+    async (c) => {
+      const streamId = episodeStreamIdFromParams(c);
+
+      const { state, streamExists, currentStreamVersion } = await c
+        .get("eventStore")
+        .aggregateStream<Episode, EpisodeEvent>(streamId, {
+          evolve,
+          initialState,
+        });
+
+      // NotFoundError -> 404 problem+json via the app-level onError mapper.
+      if (!streamExists || state.status !== "Created")
+        throw new NotFoundError({ id: streamId, type: "Episode" });
+
+      c.header("ETag", toWeakETag(currentStreamVersion));
+      return c.json(state, 200);
     },
   );
 };
