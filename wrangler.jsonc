@@ -3,6 +3,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
+  // The emmett-sqlite root barrel transitively imports the optional native
+  // drivers `pg` and `sqlite3` (via pongo/dumbo). They are never used with the
+  // D1 driver, so alias them to an empty stub to make the Worker bundle.
+  "alias": {
+    "pg": "./src/stubs/native-driver-stub.ts",
+    "sqlite3": "./src/stubs/native-driver-stub.ts"
+  },
   "d1_databases": [
     {
       "binding": "DB",
