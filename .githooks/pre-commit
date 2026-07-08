@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Non-blocking pre-commit feedback: runs build, tests, and lint,
+# prints a PASS/FAIL summary per step, and ALWAYS exits 0.
+# Red-phase TDD commits (failing tests) are allowed by design;
+# any other commit should show all steps green.
+
+run_step() {
+  local name="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    echo "PASS  $name"
+  else
+    echo "FAIL  $name"
+  fi
+}
+
+echo "--- pre-commit feedback (non-blocking) ---"
+run_step "npm run build" npm run build
+run_step "npm test     " npm test
+run_step "npm run lint " npm run lint
+echo "-------------------------------------------"
+
+exit 0

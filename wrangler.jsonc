@@ -1,0 +1,14 @@
+{
+  "name": "podcast-cms",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "podcast-cms",
+      // Placeholder id — fine for local dev; replace with a real D1 id before remote deploy.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}
