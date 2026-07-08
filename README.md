@@ -53,6 +53,14 @@ Identity is just the `X-User` header; a static map in `src/auth/permissions.ts` 
 
 Check order: unknown podcast → **404**; missing/unknown `X-User` → **401**; no grant, or RO grant on an RW route → **403**.
 
+Auth failures are thrown as [`HTTPException`](https://hono.dev/docs/api/exception) per the Hono idiom, so ALL errors — auth included — are rendered as RFC 7807 `application/problem+json` by a single shared `onError` handler (`src/errors.ts`). Sample 401 body:
+
+```json
+{"type":"about:blank","title":"Unauthorized","detail":"Unknown or missing user","status":401}
+```
+
+`WWW-Authenticate` is deliberately omitted on 401 — `X-User` is demo pseudo-auth, not an HTTP auth scheme, so a challenge header would be misleading.
+
 ## API reference
 
 All routes are prefixed `/podcasts/:podcastId`. Errors are `application/problem+json`.
