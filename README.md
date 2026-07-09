@@ -158,7 +158,7 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
 
 ## Read model caveat
 
-The `episodes_list` table (backing `GET /podcasts/:p/episodes`) is an **inline projection** — it is updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
+The `episodes` Pongo collection (backing both `GET /podcasts/:p/episodes` and `GET /podcasts/:p/episodes/:n`) is an **inline projection** ([`pongoSingleStreamProjection`](https://event-driven-io.github.io/Pongo/)) — the collection table is auto-created on schema migration (no hand-written DDL) and updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
 
 ```bash
 rm -rf .wrangler/state

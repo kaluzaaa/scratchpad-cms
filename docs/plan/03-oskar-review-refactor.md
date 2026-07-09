@@ -452,7 +452,7 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
 - [x] Task 3: drop `now` from metadata; server-side `published_at` as command data; history uses recorded time
 - [x] Task 4: inline event/command payloads; delete shared field-group types; whitelists move to `api.ts`
 - [x] Task 5: hard publication gate — `requiredForPublication` + `ValidationError` on publish
-- [ ] Task 6: Pongo read model on D1 (`pongoSingleStreamProjection`); GET list/single served from Pongo
+- [x] Task 6: Pongo read model on D1 (`pongoSingleStreamProjection`); GET list/single served from Pongo
 - [ ] Task 7: two-stage transcript import events + routes; transcript removed from content PATCH
 - [ ] Task 8: slim aggregate to invariant flags; history switches to read-model evolve
 - [ ] Task 9: `ApiSpecification` HTTP-layer tests (`api.spec.ts`)

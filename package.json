@@ -14,6 +14,7 @@
     "@event-driven-io/emmett": "0.43.0-beta.23",
     "@event-driven-io/emmett-honojs": "0.43.0-beta.23",
     "@event-driven-io/emmett-sqlite": "0.43.0-beta.23",
+    "@event-driven-io/pongo": "0.17.0-beta.40",
     "@hono/node-server": "^1.19.9",
     "hono": "^4.11.7",
     "http-problem-details": "^0.1.7"

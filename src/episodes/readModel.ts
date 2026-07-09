@@ -1,74 +1,136 @@
-import { SQL } from "@event-driven-io/dumbo";
-import type { ReadEvent } from "@event-driven-io/emmett";
 import {
-  type SQLiteReadEventMetadata,
-  sqliteRawSQLProjection,
+  type SQLiteProjectionHandlerContext,
+  sqliteProjection,
 } from "@event-driven-io/emmett-sqlite";
-import type {
-  EpisodeContentUpdated,
-  EpisodeCreated,
-  EpisodePublished,
-} from "./episode";
+import { type PongoClientOptions, pongoClient } from "@event-driven-io/pongo";
+import { d1Driver } from "@event-driven-io/pongo/cloudflare";
+import type { EpisodeEvent } from "./episode";
 
-// Runs on every schema.migrate() (idempotent), so the read-model table is
-// created together with the event store schema — no separate bootstrap.
-const initSQL = SQL`
-  CREATE TABLE IF NOT EXISTS episodes_list (
-    stream_id TEXT PRIMARY KEY,
-    podcast_id TEXT NOT NULL,
-    episode_number INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    episode_date TEXT NOT NULL,
-    last_published_at TEXT
-  );
-`;
+// Full episode document maintained by the inline Pongo projection; serves
+// both GET endpoints. Field names stay snake_case, consistent with events.
+export type EpisodeDocument = {
+  _id: string; // = stream name (set by the projection on write)
+  podcast_id: string;
+  episode_number: number;
+  title: string;
+  episode_date: string;
+  intro?: string;
+  transcript?: string;
+  link_notes?: string;
+  newsletter?: string;
+  summarization?: string;
+  yt_chapters?: string;
+  meta_seo?: unknown;
+  duration_ms?: number;
+  spotify_id?: string;
+  apple_url?: string;
+  youtube_id?: string;
+  spreaker_id?: string;
+  audio_url?: string;
+  teaser_video_url?: string;
+  discord_send?: boolean;
+  is_published: boolean;
+  transcript_reviewed: boolean;
+  last_published_at?: string;
+};
 
-// Read events carry recorded metadata (incl. streamName) set on append.
-type EpisodesListEvent = ReadEvent<
-  EpisodeCreated | EpisodeContentUpdated | EpisodePublished,
-  SQLiteReadEventMetadata
->;
+export const evolveDocument = (
+  doc: EpisodeDocument,
+  event: EpisodeEvent,
+): EpisodeDocument => {
+  const { type, data } = event;
 
-const evolve = (event: EpisodesListEvent): SQL => {
-  const streamId = event.metadata.streamName;
-
-  switch (event.type) {
-    case "EpisodeCreated": {
-      const { podcast_id, episode_number, title, episode_date } = event.data;
-
-      return SQL`
-        INSERT INTO episodes_list
-          (stream_id, podcast_id, episode_number, title, episode_date)
-        VALUES
-          (${streamId}, ${podcast_id}, ${episode_number}, ${title}, ${episode_date})
-        ON CONFLICT (stream_id) DO UPDATE SET
-          episode_number = excluded.episode_number,
-          title = excluded.title,
-          episode_date = excluded.episode_date;`;
-    }
-    case "EpisodeContentUpdated": {
-      // Event data carries only the changed keys; COALESCE keeps the current
-      // value when a key is absent (title/episode_date are never null here).
-      const { title, episode_date } = event.data;
-
-      return SQL`
-        UPDATE episodes_list SET
-          title = COALESCE(${title ?? null}, title),
-          episode_date = COALESCE(${episode_date ?? null}, episode_date)
-        WHERE stream_id = ${streamId};`;
-    }
+  switch (type) {
+    case "EpisodeCreated":
+      return {
+        ...doc,
+        ...data,
+        is_published: false,
+        transcript_reviewed: false,
+      };
+    case "EpisodeContentUpdated":
+    case "EpisodeDistributionUpdated":
+      // Event data carries only the changed keys, so a shallow merge suffices.
+      return { ...doc, ...data };
+    case "TranscriptReviewed":
+      return { ...doc, transcript_reviewed: true };
     case "EpisodePublished":
-      return SQL`
-        UPDATE episodes_list SET last_published_at = ${event.data.published_at}
-        WHERE stream_id = ${streamId};`;
+      return {
+        ...doc,
+        is_published: true,
+        last_published_at: data.published_at,
+      };
+    default: {
+      const _notExistingEventType: never = type;
+      return doc;
+    }
   }
 };
 
-export const episodesListProjection = sqliteRawSQLProjection<EpisodesListEvent>(
-  {
-    name: "episodesList",
-    canHandle: ["EpisodeCreated", "EpisodeContentUpdated", "EpisodePublished"],
-    init: () => initSQL,
-    evolve,
+// Fed to `evolveDocument` before the first event; EpisodeCreated fills the
+// identity fields and Pongo stamps `_id` (= stream name) on write.
+const emptyDocument = (): EpisodeDocument => ({
+  _id: "",
+  podcast_id: "",
+  episode_number: 0,
+  title: "",
+  episode_date: "",
+  is_published: false,
+  transcript_reviewed: false,
+});
+
+const COLLECTION_NAME = "episodes";
+
+// WORKAROUND (pongo 0.17.0-beta.40): emmett's `pongoSingleStreamProjection`
+// hands the event store's connection to the Pongo client as nested
+// `connectionOptions: { connection }`. The pg/sqlite3 Pongo drivers unpack
+// that key, but the D1 driver does not — it builds a client around
+// `database: undefined` and crashes on first use. Until fixed upstream, this
+// projection mirrors the helper's single-stream behavior via public APIs,
+// passing the ambient connection at the TOP level (which the D1 driver
+// honors), keeping the same inline (same-append) consistency.
+const pongoOnConnection = (
+  connection: SQLiteProjectionHandlerContext["connection"],
+) =>
+  pongoClient({
+    driver: d1Driver,
+    // Reuses the event store's own connection; `database` is unused at
+    // runtime when `connection` is provided, hence the cast.
+    connection,
+  } as unknown as PongoClientOptions<typeof d1Driver>);
+
+// Inline projection over the `episodes` Pongo collection; its init migrates
+// the collection schema, so the table is auto-created (no hand-written DDL).
+export const episodesProjection = sqliteProjection<EpisodeEvent>({
+  name: COLLECTION_NAME,
+  canHandle: [
+    "EpisodeCreated",
+    "EpisodeContentUpdated",
+    "TranscriptReviewed",
+    "EpisodePublished",
+    "EpisodeDistributionUpdated",
+  ],
+  handle: async (events, context) => {
+    const pongo = pongoOnConnection(context.connection);
+    try {
+      const collection = pongo
+        .db()
+        .collection<EpisodeDocument>(COLLECTION_NAME);
+      for (const event of events) {
+        await collection.handle(event.metadata.streamName, (document) =>
+          evolveDocument(document ?? emptyDocument(), event),
+        );
+      }
+    } finally {
+      await pongo.close();
+    }
   },
-);
+  init: async ({ context }) => {
+    const pongo = pongoOnConnection(context.connection);
+    try {
+      await pongo.db().collection(COLLECTION_NAME).schema.migrate();
+    } finally {
+      await pongo.close();
+    }
+  },
+});

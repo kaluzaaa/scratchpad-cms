@@ -5,12 +5,13 @@ import {
   ValidationError,
 } from "@event-driven-io/emmett";
 import { toWeakETag } from "@event-driven-io/emmett-honojs";
+import { type PongoCollection, pongoClient } from "@event-driven-io/pongo";
+import { d1Driver } from "@event-driven-io/pongo/cloudflare";
 import type { Context, Hono } from "hono";
 import { requireAccess } from "../auth/middleware";
 import type { Env, Variables } from "../env";
 import { decide, type EpisodeCommand } from "./businessLogic";
 import {
-  type Episode,
   type EpisodeContentUpdated,
   type EpisodeDistributionUpdated,
   type EpisodeEvent,
@@ -20,11 +21,36 @@ import {
   initialState,
 } from "./episode";
 import { buildHistory, readRecordedTimestamps } from "./history";
+import type { EpisodeDocument } from "./readModel";
 
 type AppEnv = { Bindings: Env; Variables: Variables };
 type AppContext = Context<AppEnv>;
 
 const handle = CommandHandler({ evolve, initialState });
+
+// Query-side Pongo client over the same D1 binding, memoized per Worker
+// isolate like `getEventStore`. Importing `d1Driver` also registers the
+// driver the inline projection resolves from the global registry.
+// `session_based` transaction mode is REQUIRED on D1.
+let episodes: PongoCollection<EpisodeDocument> | undefined;
+
+const episodesCollection = (db: D1Database): PongoCollection<EpisodeDocument> =>
+  (episodes ??= pongoClient({
+    driver: d1Driver,
+    database: db,
+    transactionOptions: { mode: "session_based" },
+  })
+    .db()
+    .collection<EpisodeDocument>("episodes"));
+
+// Pongo returns `_version` as a BigInt, which JSON cannot serialize.
+const toJsonDocument = ({
+  _version,
+  ...doc
+}: EpisodeDocument & { _version: bigint }) => ({
+  ...doc,
+  _version: _version.toString(),
+});
 
 // Runtime whitelists for API body filtering (this is their only consumer);
 // `satisfies` keeps every entry a valid key of the inline event payload.
@@ -252,16 +278,14 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     "/podcasts/:podcastId/episodes",
     requireAccess("RO"),
     async (c) => {
-      // Read model maintained by the inline episodes_list projection;
-      // queried straight from the D1 binding (no event store involved).
-      const { results } = await c.env.DB.prepare(
-        `SELECT stream_id, podcast_id, episode_number, title, episode_date, last_published_at
-         FROM episodes_list WHERE podcast_id = ?1 ORDER BY episode_number`,
-      )
-        .bind(c.req.param("podcastId") ?? "")
-        .all();
+      // Read model maintained by the inline `episodes` Pongo projection;
+      // queried via the query-side Pongo client (no event store involved).
+      const documents = await episodesCollection(c.env.DB).find(
+        { podcast_id: c.req.param("podcastId") ?? "" },
+        { sort: { episode_number: 1 } },
+      );
 
-      return c.json({ episodes: results }, 200);
+      return c.json({ episodes: documents.map(toJsonDocument) }, 200);
     },
   );
 
@@ -271,19 +295,16 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
 
-      const { state, streamExists, currentStreamVersion } = await c
-        .get("eventStore")
-        .aggregateStream<Episode, EpisodeEvent>(streamId, {
-          evolve,
-          initialState,
-        });
+      const document = await episodesCollection(c.env.DB).findOne({
+        _id: streamId,
+      });
 
       // NotFoundError -> 404 problem+json via the app-level onError mapper.
-      if (!streamExists || state.status !== "Created")
+      if (document === null)
         throw new NotFoundError({ id: streamId, type: "Episode" });
 
-      c.header("ETag", toWeakETag(currentStreamVersion));
-      return c.json(state, 200);
+      c.header("ETag", toWeakETag(document._version));
+      return c.json(toJsonDocument(document), 200);
     },
   );
 
