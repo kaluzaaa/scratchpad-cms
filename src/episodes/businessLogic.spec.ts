@@ -31,6 +31,7 @@ const metadata = { user: "alice", reason: "test reason", now };
 const metadata2 = { user: "alice", reason: "test reason", now: now2 };
 
 const creationData = {
+  podcast_id: "patoarchitekci",
   episode_number: 42,
   title: "Event Sourcing 101",
   episode_date: "2026-07-01",

@@ -4,11 +4,10 @@ import {
   type SQLiteReadEventMetadata,
   sqliteRawSQLProjection,
 } from "@event-driven-io/emmett-sqlite";
-import {
-  type EpisodeContentUpdated,
-  type EpisodeCreated,
-  type EpisodePublished,
-  parseEpisodeStreamId,
+import type {
+  EpisodeContentUpdated,
+  EpisodeCreated,
+  EpisodePublished,
 } from "./episode";
 
 // Runs on every schema.migrate() (idempotent), so the read-model table is
@@ -35,14 +34,13 @@ const evolve = (event: EpisodesListEvent): SQL => {
 
   switch (event.type) {
     case "EpisodeCreated": {
-      const { podcastId } = parseEpisodeStreamId(streamId);
-      const { episode_number, title, episode_date } = event.data;
+      const { podcast_id, episode_number, title, episode_date } = event.data;
 
       return SQL`
         INSERT INTO episodes_list
           (stream_id, podcast_id, episode_number, title, episode_date)
         VALUES
-          (${streamId}, ${podcastId}, ${episode_number}, ${title}, ${episode_date})
+          (${streamId}, ${podcast_id}, ${episode_number}, ${title}, ${episode_date})
         ON CONFLICT (stream_id) DO UPDATE SET
           episode_number = excluded.episode_number,
           title = excluded.title,

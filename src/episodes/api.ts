@@ -118,11 +118,14 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     "/podcasts/:podcastId/episodes",
     requireAccess("RW"),
     async (c) => {
-      const data = parseCreationFields(await readJsonObject(c));
-      const streamId = episodeStreamId(
-        c.req.param("podcastId") ?? "",
-        data.episode_number,
-      );
+      // `?? ""` only narrows the type; the auth middleware has already
+      // rejected unknown podcasts by this point.
+      const podcastId = c.req.param("podcastId") ?? "";
+      const data = {
+        ...parseCreationFields(await readJsonObject(c)),
+        podcast_id: podcastId,
+      };
+      const streamId = episodeStreamId(podcastId, data.episode_number);
 
       const result = await handle(
         c.get("eventStore"),

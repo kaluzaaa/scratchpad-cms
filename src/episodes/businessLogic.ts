@@ -19,7 +19,7 @@ import type {
 
 export type CreateEpisode = Command<
   "CreateEpisode",
-  EpisodeCreationFields,
+  EpisodeCreationFields & { podcast_id: string },
   EpisodeEventMetadata
 >;
 

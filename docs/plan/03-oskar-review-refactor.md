@@ -448,7 +448,7 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
 ## Checklist
 
 - [x] Task 1: branch `refactor/oskar-review` + commit plan doc + push + open draft PR
-- [ ] Task 2: explicit `podcast_id` in `EpisodeCreated` data; delete `parseEpisodeStreamId`
+- [x] Task 2: explicit `podcast_id` in `EpisodeCreated` data; delete `parseEpisodeStreamId`
 - [ ] Task 3: drop `now` from metadata; server-side `published_at` as command data; history uses recorded time
 - [ ] Task 4: inline event/command payloads; delete shared field-group types; whitelists move to `api.ts`
 - [ ] Task 5: hard publication gate — `requiredForPublication` + `ValidationError` on publish
