@@ -30,7 +30,6 @@ export type EpisodeContentUpdated = Event<
   Partial<{
     title: string;
     intro: string;
-    transcript: string;
     episode_date: string;
     link_notes: string;
     newsletter: string;
@@ -42,9 +41,18 @@ export type EpisodeContentUpdated = Event<
   EpisodeEventMetadata
 >;
 
-export type TranscriptReviewed = Event<
-  "TranscriptReviewed",
-  Record<string, never>,
+// Two-stage transcript flow: a HappyScribe draft import, then a reviewed
+// import (triggered by the proofreader's email) overwriting the same field.
+// The reviewed flag gates transcript publication, not episode publication.
+export type TranscriptDraftImported = Event<
+  "TranscriptDraftImported",
+  { podcast_id: string; episode_number: number; transcript: string },
+  EpisodeEventMetadata
+>;
+
+export type ReviewedTranscriptImported = Event<
+  "ReviewedTranscriptImported",
+  { podcast_id: string; episode_number: number; transcript: string },
   EpisodeEventMetadata
 >;
 
@@ -71,7 +79,8 @@ export type EpisodeDistributionUpdated = Event<
 export type EpisodeEvent =
   | EpisodeCreated
   | EpisodeContentUpdated
-  | TranscriptReviewed
+  | TranscriptDraftImported
+  | ReviewedTranscriptImported
   | EpisodePublished
   | EpisodeDistributionUpdated;
 
@@ -87,7 +96,6 @@ export type Episode =
       title: string;
       episode_date: string;
       intro?: string;
-      transcript?: string;
       link_notes?: string;
       newsletter?: string;
       summarization?: string;
@@ -130,7 +138,10 @@ export const evolve = (state: Episode, event: EpisodeEvent): Episode => {
       // Event data carries only the changed keys, so a shallow merge suffices.
       return { ...state, ...data };
     }
-    case "TranscriptReviewed": {
+    case "TranscriptDraftImported":
+      // Milestone with no invariant impact; transcript lives in the read model.
+      return state;
+    case "ReviewedTranscriptImported": {
       if (state.status !== "Created") return state;
 
       return { ...state, transcript_reviewed: true };

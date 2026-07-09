@@ -14,7 +14,7 @@ import {
   type EpisodePublished,
   evolve,
   initialState,
-  type TranscriptReviewed,
+  type TranscriptDraftImported,
 } from "./episode";
 
 const given = DeciderSpecification.for({
@@ -44,9 +44,20 @@ const episodeCreated: EpisodeCreated = {
   metadata,
 };
 
-const transcriptReviewed: TranscriptReviewed = {
-  type: "TranscriptReviewed",
-  data: {},
+const draftImportData = {
+  podcast_id: "patoarchitekci",
+  episode_number: 42,
+  transcript: "draft transcript...",
+};
+
+const reviewedImportData = {
+  ...draftImportData,
+  transcript: "reviewed transcript...",
+};
+
+const transcriptDraftImported: TranscriptDraftImported = {
+  type: "TranscriptDraftImported",
+  data: draftImportData,
   metadata,
 };
 
@@ -89,7 +100,7 @@ void describe("Episode decider", () => {
 
   void describe("UpdateEpisodeContent", () => {
     void it("emits only the provided fields on partial update", () => {
-      const update = { transcript: "hello...", duration_ms: 3600000 };
+      const update = { link_notes: "- links...", duration_ms: 3600000 };
 
       given([episodeCreated])
         .when({ type: "UpdateEpisodeContent", data: update, metadata })
@@ -129,7 +140,7 @@ void describe("Episode decider", () => {
       given([])
         .when({
           type: "UpdateEpisodeContent",
-          data: { transcript: "hello..." },
+          data: { intro: "hello..." },
           metadata,
         })
         .thenThrows(NotFoundError);
@@ -166,17 +177,85 @@ void describe("Episode decider", () => {
     });
   });
 
-  void describe("ReviewTranscript", () => {
-    void it("marks the transcript as reviewed", () => {
+  void describe("ImportTranscriptDraft", () => {
+    void it("imports the draft transcript with full data", () => {
       given([episodeCreated])
-        .when({ type: "ReviewTranscript", data: {}, metadata })
-        .then([{ type: "TranscriptReviewed", data: {}, metadata }]);
+        .when({
+          type: "ImportTranscriptDraft",
+          data: draftImportData,
+          metadata,
+        })
+        .then([
+          { type: "TranscriptDraftImported", data: draftImportData, metadata },
+        ]);
     });
 
-    void it("allows repeated review", () => {
-      given([episodeCreated, transcriptReviewed])
-        .when({ type: "ReviewTranscript", data: {}, metadata })
-        .then([{ type: "TranscriptReviewed", data: {}, metadata }]);
+    void it("does not mark the transcript as reviewed", () => {
+      const state = [episodeCreated, transcriptDraftImported].reduce(
+        evolve,
+        initialState(),
+      );
+
+      strictEqual(state.status, "Created");
+      strictEqual(
+        state.status === "Created" && state.transcript_reviewed,
+        false,
+      );
+    });
+
+    void it("rejects importing into a not created episode", () => {
+      given([])
+        .when({
+          type: "ImportTranscriptDraft",
+          data: draftImportData,
+          metadata,
+        })
+        .thenThrows(NotFoundError);
+    });
+  });
+
+  void describe("ImportReviewedTranscript", () => {
+    void it("imports the reviewed transcript, overwriting the draft", () => {
+      given([episodeCreated, transcriptDraftImported])
+        .when({
+          type: "ImportReviewedTranscript",
+          data: reviewedImportData,
+          metadata,
+        })
+        .then([
+          {
+            type: "ReviewedTranscriptImported",
+            data: reviewedImportData,
+            metadata,
+          },
+        ]);
+    });
+
+    void it("marks the transcript as reviewed", () => {
+      const state = [
+        episodeCreated,
+        transcriptDraftImported,
+        {
+          type: "ReviewedTranscriptImported",
+          data: reviewedImportData,
+          metadata,
+        } as const,
+      ].reduce(evolve, initialState());
+
+      strictEqual(
+        state.status === "Created" && state.transcript_reviewed,
+        true,
+      );
+    });
+
+    void it("rejects importing into a not created episode", () => {
+      given([])
+        .when({
+          type: "ImportReviewedTranscript",
+          data: reviewedImportData,
+          metadata,
+        })
+        .thenThrows(NotFoundError);
     });
   });
 

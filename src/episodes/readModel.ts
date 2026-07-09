@@ -52,8 +52,17 @@ export const evolveDocument = (
     case "EpisodeDistributionUpdated":
       // Event data carries only the changed keys, so a shallow merge suffices.
       return { ...doc, ...data };
-    case "TranscriptReviewed":
-      return { ...doc, transcript_reviewed: true };
+    case "TranscriptDraftImported":
+    case "ReviewedTranscriptImported":
+      // ONE transcript field, last-write-wins (reviewed overwrites draft).
+      return {
+        ...doc,
+        transcript: data.transcript,
+        transcript_reviewed:
+          type === "ReviewedTranscriptImported"
+            ? true
+            : doc.transcript_reviewed,
+      };
     case "EpisodePublished":
       return {
         ...doc,
@@ -106,7 +115,8 @@ export const episodesProjection = sqliteProjection<EpisodeEvent>({
   canHandle: [
     "EpisodeCreated",
     "EpisodeContentUpdated",
-    "TranscriptReviewed",
+    "TranscriptDraftImported",
+    "ReviewedTranscriptImported",
     "EpisodePublished",
     "EpisodeDistributionUpdated",
   ],

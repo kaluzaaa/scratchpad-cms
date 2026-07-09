@@ -54,10 +54,11 @@ const toJsonDocument = ({
 
 // Runtime whitelists for API body filtering (this is their only consumer);
 // `satisfies` keeps every entry a valid key of the inline event payload.
+// `transcript` is deliberately absent: read-only in the general content PATCH,
+// written only via the transcript import routes (HappyScribe/RPC path).
 const EPISODE_CONTENT_FIELD_KEYS = [
   "title",
   "intro",
-  "transcript",
   "episode_date",
   "link_notes",
   "newsletter",
@@ -123,6 +124,13 @@ const episodeStreamIdFromParams = (c: AppContext): string =>
     parseEpisodeNumber(c.req.param("episodeNumber") ?? ""),
   );
 
+const parseTranscript = (body: Record<string, unknown>): string => {
+  const { transcript } = body;
+  if (typeof transcript !== "string" || transcript.length === 0)
+    throw new ValidationError("transcript must be a non-empty string");
+  return transcript;
+};
+
 const parseCreationFields = (
   body: Record<string, unknown>,
 ): { episode_number: number; title: string; episode_date: string } => {
@@ -156,6 +164,26 @@ const executeCommand = (
   streamId: string,
   command: EpisodeCommand,
 ) => handle(c.get("eventStore"), streamId, (state) => decide(command, state));
+
+// Shared handler for the two transcript import routes (draft vs reviewed
+// differ only in the command type); models the HappyScribe integration path.
+const importTranscript =
+  (type: "ImportTranscriptDraft" | "ImportReviewedTranscript") =>
+  async (c: AppContext) => {
+    const podcast_id = c.req.param("podcastId") ?? "";
+    const episode_number = parseEpisodeNumber(
+      c.req.param("episodeNumber") ?? "",
+    );
+    const transcript = parseTranscript(await readJsonObject(c));
+
+    await executeCommand(c, episodeStreamId(podcast_id, episode_number), {
+      type,
+      data: { podcast_id, episode_number, transcript },
+      metadata: commandMetadata(c),
+    });
+
+    return c.body(null, 204);
+  };
 
 /////////////////////////////////////////
 ////////// Routes
@@ -235,19 +263,15 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
   );
 
   router.post(
-    "/podcasts/:podcastId/episodes/:episodeNumber/transcript/review",
+    "/podcasts/:podcastId/episodes/:episodeNumber/transcript/draft",
     requireAccess("RW"),
-    async (c) => {
-      const streamId = episodeStreamIdFromParams(c);
+    importTranscript("ImportTranscriptDraft"),
+  );
 
-      await executeCommand(c, streamId, {
-        type: "ReviewTranscript",
-        data: {},
-        metadata: commandMetadata(c),
-      });
-
-      return c.body(null, 204);
-    },
+  router.post(
+    "/podcasts/:podcastId/episodes/:episodeNumber/transcript/reviewed",
+    requireAccess("RW"),
+    importTranscript("ImportReviewedTranscript"),
   );
 
   router.post(

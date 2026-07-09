@@ -29,7 +29,6 @@ export type UpdateEpisodeContent = Command<
   Partial<{
     title: string;
     intro: string;
-    transcript: string;
     episode_date: string;
     link_notes: string;
     newsletter: string;
@@ -41,9 +40,15 @@ export type UpdateEpisodeContent = Command<
   EpisodeEventMetadata
 >;
 
-export type ReviewTranscript = Command<
-  "ReviewTranscript",
-  Record<string, never>,
+export type ImportTranscriptDraft = Command<
+  "ImportTranscriptDraft",
+  { podcast_id: string; episode_number: number; transcript: string },
+  EpisodeEventMetadata
+>;
+
+export type ImportReviewedTranscript = Command<
+  "ImportReviewedTranscript",
+  { podcast_id: string; episode_number: number; transcript: string },
   EpisodeEventMetadata
 >;
 
@@ -71,7 +76,8 @@ export type UpdateEpisodeDistribution = Command<
 export type EpisodeCommand =
   | CreateEpisode
   | UpdateEpisodeContent
-  | ReviewTranscript
+  | ImportTranscriptDraft
+  | ImportReviewedTranscript
   | PublishEpisode
   | UpdateEpisodeDistribution;
 
@@ -147,12 +153,21 @@ export const decide = (
         metadata: stampMetadata(metadata),
       };
     }
-    case "ReviewTranscript": {
+    case "ImportTranscriptDraft": {
       ensureCreated(state);
 
       return {
-        type: "TranscriptReviewed",
-        data: {},
+        type: "TranscriptDraftImported",
+        data,
+        metadata: stampMetadata(metadata),
+      };
+    }
+    case "ImportReviewedTranscript": {
+      ensureCreated(state);
+
+      return {
+        type: "ReviewedTranscriptImported",
+        data,
         metadata: stampMetadata(metadata),
       };
     }

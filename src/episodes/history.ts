@@ -11,12 +11,13 @@ type CreatedEpisode = Extract<Episode, { status: "Created" }>;
 type EpisodeFieldKey = Exclude<keyof CreatedEpisode, "status">;
 
 // All auditable episode fields (state keys minus the `status` discriminator);
-// `satisfies` keeps every entry a valid state key.
+// `satisfies` keeps every entry a valid state key. `transcript` is absent
+// because the aggregate no longer stores it; Task 8 restores full-data diffs
+// by switching history to the read-model document evolve.
 const FIELDS = [
   "episode_number",
   "title",
   "intro",
-  "transcript",
   "episode_date",
   "link_notes",
   "newsletter",

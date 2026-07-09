@@ -11,19 +11,20 @@ A demo API for managing podcast episodes, built as an event-sourced "hello world
 
 ## Event catalog
 
-Five events, grouped by why they happen rather than what field they touch:
+Six events, grouped by why they happen rather than what field they touch:
 
 | Event | Data | Grouping rationale |
 |---|---|---|
 | `EpisodeCreated` | `{ episode_number, title, episode_date }` | Birth of the stream; the required identity fields. |
-| `EpisodeContentUpdated` | `Partial<{ title, intro, transcript, episode_date, link_notes, newsletter, summarization, yt_chapters, meta_seo, duration_ms }>` | One editorial action; only the keys actually changed are present. |
-| `TranscriptReviewed` | `{}` | A workflow fact, not a data change — sets the `transcript_reviewed` flag. |
+| `EpisodeContentUpdated` | `Partial<{ title, intro, episode_date, link_notes, newsletter, summarization, yt_chapters, meta_seo, duration_ms }>` | One editorial action; only the keys actually changed are present. |
+| `TranscriptDraftImported` | `{ podcast_id, episode_number, transcript }` | HappyScribe draft transcript import; does not mark the transcript reviewed. |
+| `ReviewedTranscriptImported` | `{ podcast_id, episode_number, transcript }` | Reviewed import (proofreader's email) overwriting the same field; sets the `transcript_reviewed` flag, which gates transcript publication — not episode publication. |
 | `EpisodePublished` | `{ published_at }` | Repeatable publish log; each publish appends a new event and advances `last_published_at`. |
 | `EpisodeDistributionUpdated` | `Partial<{ spotify_id, apple_url, youtube_id, spreaker_id, audio_url, teaser_video_url, discord_send }>` | Platform-sync concern, separate from editorial content; partial like content. |
 
 **Metadata on every event:** `{ user, reason?, now }` — `user` from the `X-User` header, `reason` from the optional `X-Reason` header, `now` as an ISO 8601 timestamp.
 
-**Why `X-Reason` is a header, not a body field:** it works uniformly across bodyless commands (publish, transcript review) and keeps PATCH bodies pure — "present keys = changed fields" with no reserved meta keys. It is also a natural place for future AI agents to explain themselves.
+**Why `X-Reason` is a header, not a body field:** it works uniformly across bodyless commands (publish) and keeps PATCH bodies pure — "present keys = changed fields" with no reserved meta keys. It is also a natural place for future AI agents to explain themselves.
 
 ## Setup & run
 
@@ -67,7 +68,8 @@ All routes are prefixed `/podcasts/:podcastId`. Errors are `application/problem+
 | POST | `/podcasts/:p/episodes` | RW | 201 + weak ETag | 400 invalid body, 409 duplicate |
 | PATCH | `/podcasts/:p/episodes/:n/content` | RW | 204 + weak ETag | 400 empty update, 404 not created |
 | PATCH | `/podcasts/:p/episodes/:n/distribution` | RW | 204 + weak ETag | 400 empty update, 404 not created |
-| POST | `/podcasts/:p/episodes/:n/transcript/review` | RW | 204 | 404 not created |
+| POST | `/podcasts/:p/episodes/:n/transcript/draft` | RW | 204 | 400 invalid body, 404 not created |
+| POST | `/podcasts/:p/episodes/:n/transcript/reviewed` | RW | 204 | 400 invalid body, 404 not created |
 | POST | `/podcasts/:p/episodes/:n/publish` | RW | 204 (repeatable) | 400 missing required fields, 404 not created |
 | GET | `/podcasts/:p/episodes/:n` | RO | 200 state + weak ETag | 404 |
 | GET | `/podcasts/:p/episodes/:n/history` | RO | 200 audit trail | 404 |
@@ -76,6 +78,8 @@ All routes are prefixed `/podcasts/:podcastId`. Errors are `application/problem+
 Plus auth errors on every route: 401 / 403 / 404 as per the check order above. Error mapping: `ValidationError` → 400, `IllegalStateError` → 403, `NotFoundError` → 404; version conflicts (duplicate create) are remapped from emmett's default 412 to **409**.
 
 Publish is gated: when the episode is not ready it returns 400 `application/problem+json` with `detail` listing the missing required fields (`episode_number`, `episode_date`, `intro`, `spreaker_id`).
+
+Transcript is **read-only in the content PATCH** — it is written only via the two import routes (body `{ transcript }`, non-empty string), modeling the real flow: HappyScribe draft import, then the reviewed import (after the proofreader's email) overwriting the same field. The reviewed flag gates transcript publication, not episode publication.
 
 ## Curl cookbook
 
@@ -87,9 +91,14 @@ curl -i -X POST localhost:8787/podcasts/podcast-a/episodes \
   -H 'X-User: alice' -H 'X-Reason: initial import' -H 'Content-Type: application/json' \
   -d '{"episode_number": 42, "title": "Event Sourcing 101", "episode_date": "2026-07-01"}'   # 201
 curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
-  -H 'X-User: alice' -H 'X-Reason: added transcript' -H 'Content-Type: application/json' \
-  -d '{"transcript": "hello...", "duration_ms": 3600000, "intro": "Welcome!"}'                # 204
-curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/transcript/review -H 'X-User: alice'  # 204
+  -H 'X-User: alice' -H 'X-Reason: editorial pass' -H 'Content-Type: application/json' \
+  -d '{"duration_ms": 3600000, "intro": "Welcome!"}'                                          # 204
+curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/transcript/draft \
+  -H 'X-User: alice' -H 'Content-Type: application/json' \
+  -d '{"transcript": "draft from HappyScribe..."}'                                            # 204
+curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/transcript/reviewed \
+  -H 'X-User: alice' -H 'Content-Type: application/json' \
+  -d '{"transcript": "reviewed by the proofreader..."}'                                       # 204 (overwrites the draft)
 curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/distribution \
   -H 'X-User: alice' -H 'Content-Type: application/json' \
   -d '{"spotify_id": "sp-123", "spreaker_id": "spr-42"}'                                      # 204
