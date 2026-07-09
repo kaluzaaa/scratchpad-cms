@@ -43,29 +43,14 @@ const assertProblem = async (response: Response, expectedStatus: number) => {
 ////////// requireAccess middleware
 /////////////////////////////////////////
 
+// The 401 (missing user) / 403 (no grant) / 404 (unknown podcast) problem+json
+// contract is covered on real routes in src/episodes/api.spec.ts; this file
+// keeps the middleware-specific cases not exercised there.
 describe("requireAccess", () => {
-  it("returns 404 problem+json for an unknown podcast even with a valid user", async () => {
-    const response = await get("podcast-x", { "X-User": "alice" });
-
-    await assertProblem(response, 404);
-  });
-
-  it("returns 401 problem+json when the X-User header is missing", async () => {
-    const response = await get("podcast-a");
-
-    await assertProblem(response, 401);
-  });
-
   it("returns 401 problem+json for an unknown user", async () => {
     const response = await get("podcast-a", { "X-User": "mallory" });
 
     await assertProblem(response, 401);
-  });
-
-  it("returns 403 problem+json for a known user without a grant for the podcast", async () => {
-    const response = await get("podcast-a", { "X-User": "bob" });
-
-    await assertProblem(response, 403);
   });
 
   it("returns 403 problem+json for an RO user on an RW route", async () => {

@@ -455,5 +455,5 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
 - [x] Task 6: Pongo read model on D1 (`pongoSingleStreamProjection`); GET list/single served from Pongo
 - [x] Task 7: two-stage transcript import events + routes; transcript removed from content PATCH
 - [x] Task 8: slim aggregate to invariant flags; history switches to read-model evolve
-- [ ] Task 9: `ApiSpecification` HTTP-layer tests (`api.spec.ts`)
+- [x] Task 9: `ApiSpecification` HTTP-layer tests (`api.spec.ts`)
 - [ ] Task 10: README refresh + finalize PR body (traceability table) + `gh pr ready`
