@@ -22,7 +22,7 @@ import {
   evolve,
   initialState,
 } from "./episode";
-import { buildHistory } from "./history";
+import { buildHistory, readRecordedTimestamps } from "./history";
 
 type AppEnv = { Bindings: Env; Variables: Variables };
 type AppContext = Context<AppEnv>;
@@ -40,7 +40,6 @@ const commandMetadata = (c: AppContext): EpisodeEventMetadata => {
   return {
     user: c.get("user"),
     ...(reason !== undefined ? { reason } : {}),
-    now: new Date().toISOString(),
   };
 };
 
@@ -208,16 +207,19 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
       const metadata = commandMetadata(c);
+      // published_at is a business fact generated server-side and passed as
+      // command data (not metadata), keeping `decide` pure.
+      const published_at = new Date().toISOString();
 
       await executeCommand(c, streamId, {
         type: "PublishEpisode",
-        data: {},
+        data: { published_at },
         metadata,
       });
 
       // Per plan: the publish action only logs (the event is the publish log).
       console.log(
-        `publish: episode ${streamId} published_at ${metadata.now} by ${metadata.user} reason ${metadata.reason ?? "-"}`,
+        `publish: episode ${streamId} published_at ${published_at} by ${metadata.user} reason ${metadata.reason ?? "-"}`,
       );
       return c.body(null, 204);
     },
@@ -275,7 +277,12 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
       if (!streamExists || events.length === 0)
         throw new NotFoundError({ id: streamId, type: "Episode" });
 
-      return c.json({ stream_id: streamId, entries: buildHistory(events) });
+      const recordedAt = await readRecordedTimestamps(c.env.DB, streamId);
+
+      return c.json({
+        stream_id: streamId,
+        entries: buildHistory(events, recordedAt),
+      });
     },
   );
 };

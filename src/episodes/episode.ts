@@ -7,7 +7,6 @@ import type { Event } from "@event-driven-io/emmett";
 export type EpisodeEventMetadata = {
   user: string;
   reason?: string;
-  now: string; // ISO 8601 timestamp
 };
 
 // Shared field groups (single source of truth for events, commands, and state)

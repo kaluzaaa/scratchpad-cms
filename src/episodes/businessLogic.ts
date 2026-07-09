@@ -37,7 +37,8 @@ export type ReviewTranscript = Command<
 
 export type PublishEpisode = Command<
   "PublishEpisode",
-  Record<string, never>,
+  // Server-generated business fact (command data, not metadata).
+  { published_at: string },
   EpisodeEventMetadata
 >;
 
@@ -63,9 +64,8 @@ export type EpisodeCommand =
 const stampMetadata = ({
   user,
   reason,
-  now,
 }: EpisodeEventMetadata): EpisodeEventMetadata =>
-  reason !== undefined ? { user, reason, now } : { user, now };
+  reason !== undefined ? { user, reason } : { user };
 
 const ensureCreated = (state: Episode): void => {
   if (state.status !== "Created") throw new NotFoundError();
@@ -127,7 +127,7 @@ export const decide = (
 
       return {
         type: "EpisodePublished",
-        data: { published_at: metadata.now },
+        data: { published_at: data.published_at },
         metadata: stampMetadata(metadata),
       };
     }

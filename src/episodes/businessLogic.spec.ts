@@ -25,10 +25,9 @@ const given = DeciderSpecification.for({
 ////////// Fixtures
 /////////////////////////////////////////
 
-const now = "2026-07-08T10:00:00.000Z";
-const now2 = "2026-07-08T12:00:00.000Z";
-const metadata = { user: "alice", reason: "test reason", now };
-const metadata2 = { user: "alice", reason: "test reason", now: now2 };
+const published_at = "2026-07-08T10:00:00.000Z";
+const published_at2 = "2026-07-08T12:00:00.000Z";
+const metadata = { user: "alice", reason: "test reason" };
 
 const creationData = {
   podcast_id: "patoarchitekci",
@@ -51,7 +50,7 @@ const transcriptReviewed: TranscriptReviewed = {
 
 const episodePublished: EpisodePublished = {
   type: "EpisodePublished",
-  data: { published_at: now },
+  data: { published_at },
   metadata,
 };
 
@@ -162,41 +161,43 @@ void describe("Episode decider", () => {
 
     void it("allows repeated review", () => {
       given([episodeCreated, transcriptReviewed])
-        .when({ type: "ReviewTranscript", data: {}, metadata: metadata2 })
-        .then([{ type: "TranscriptReviewed", data: {}, metadata: metadata2 }]);
+        .when({ type: "ReviewTranscript", data: {}, metadata })
+        .then([{ type: "TranscriptReviewed", data: {}, metadata }]);
     });
   });
 
   void describe("PublishEpisode", () => {
-    void it("publishes with published_at taken from command metadata now", () => {
+    void it("publishes with published_at taken from the command data", () => {
       given([episodeCreated])
-        .when({ type: "PublishEpisode", data: {}, metadata })
-        .then([
-          { type: "EpisodePublished", data: { published_at: now }, metadata },
-        ]);
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .then([{ type: "EpisodePublished", data: { published_at }, metadata }]);
     });
 
     void it("rejects publishing a not created episode", () => {
       given([])
-        .when({ type: "PublishEpisode", data: {}, metadata })
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
         .thenThrows(NotFoundError);
     });
 
     void it("allows repeated publish, each appending its own published_at", () => {
       given([episodeCreated, episodePublished])
-        .when({ type: "PublishEpisode", data: {}, metadata: metadata2 })
+        .when({
+          type: "PublishEpisode",
+          data: { published_at: published_at2 },
+          metadata,
+        })
         .then([
           {
             type: "EpisodePublished",
-            data: { published_at: now2 },
-            metadata: metadata2,
+            data: { published_at: published_at2 },
+            metadata,
           },
         ]);
     });
   });
 
   void describe("Metadata stamping", () => {
-    void it("stamps user, reason and now from the command metadata", () => {
+    void it("stamps user and reason from the command metadata", () => {
       given([])
         .when({ type: "CreateEpisode", data: creationData, metadata })
         .then((events) => {
@@ -206,7 +207,7 @@ void describe("Episode decider", () => {
     });
 
     void it("produces no reason when the command has none", () => {
-      const metadataWithoutReason = { user: "alice", now };
+      const metadataWithoutReason = { user: "alice" };
 
       given([])
         .when({
@@ -216,9 +217,7 @@ void describe("Episode decider", () => {
         })
         .then((events) => {
           strictEqual(events.length, 1);
-          strictEqual(events[0]?.metadata.user, "alice");
-          strictEqual(events[0]?.metadata.now, now);
-          strictEqual(events[0]?.metadata.reason, undefined);
+          deepStrictEqual(events[0]?.metadata, metadataWithoutReason);
         });
     });
   });

@@ -1,4 +1,5 @@
 import type { ReadEvent } from "@event-driven-io/emmett";
+import { defaultTag, messagesTable } from "@event-driven-io/emmett-sqlite";
 import {
   EPISODE_CONTENT_FIELD_KEYS,
   EPISODE_DISTRIBUTION_FIELD_KEYS,
@@ -33,8 +34,33 @@ export type HistoryEntry = {
   type: EpisodeEvent["type"];
   user: string;
   reason: string | null;
-  timestamp: string;
+  timestamp: string | null;
   changes: FieldChange[];
+};
+
+// The store stamps recorded time itself (`created` column of its messages
+// table), but emmett's readStream does not expose it on read events, so
+// history queries the column directly, keyed by stream position.
+export const readRecordedTimestamps = async (
+  db: D1Database,
+  streamId: string,
+): Promise<Map<string, string>> => {
+  const { results } = await db
+    .prepare(
+      `SELECT CAST(stream_position AS TEXT) AS stream_position, created
+       FROM ${messagesTable.name}
+       WHERE stream_id = ?1 AND partition = ?2 AND is_archived = FALSE`,
+    )
+    .bind(streamId, defaultTag)
+    .all<{ stream_position: string; created: string }>();
+
+  // SQLite CURRENT_TIMESTAMP stores UTC 'YYYY-MM-DD HH:MM:SS' -> ISO 8601.
+  return new Map(
+    results.map(({ stream_position, created }) => [
+      stream_position,
+      `${created.replace(" ", "T")}Z`,
+    ]),
+  );
 };
 
 const fieldValue = (state: Episode, field: EpisodeFieldKey): unknown =>
@@ -49,6 +75,7 @@ const differs = (before: unknown, after: unknown): boolean =>
 // business events into a per-field audit trail.
 export const buildHistory = (
   events: ReadEvent<EpisodeEvent>[],
+  recordedAt: Map<string, string>,
 ): HistoryEntry[] => {
   const entries: HistoryEntry[] = [];
   let state = initialState();
@@ -64,13 +91,15 @@ export const buildHistory = (
         changes.push({ field, before: before ?? null, after: after ?? null });
     }
 
+    // streamPosition is a bigint (not JSON-serializable) -> string.
+    const streamPosition = String(event.metadata.streamPosition);
+
     entries.push({
-      // streamPosition is a bigint (not JSON-serializable) -> string.
-      stream_position: String(event.metadata.streamPosition),
+      stream_position: streamPosition,
       type: event.type,
       user: event.metadata.user,
       reason: event.metadata.reason ?? null,
-      timestamp: event.metadata.now,
+      timestamp: recordedAt.get(streamPosition) ?? null,
       changes,
     });
 
