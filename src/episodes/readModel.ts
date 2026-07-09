@@ -76,9 +76,10 @@ export const evolveDocument = (
   }
 };
 
-// Fed to `evolveDocument` before the first event; EpisodeCreated fills the
-// identity fields and Pongo stamps `_id` (= stream name) on write.
-const emptyDocument = (): EpisodeDocument => ({
+// Fed to `evolveDocument` before the first event (here and in the history
+// replay); EpisodeCreated fills the identity fields and Pongo stamps `_id`
+// (= stream name) on write.
+export const emptyDocument = (): EpisodeDocument => ({
   _id: "",
   podcast_id: "",
   episode_number: 0,

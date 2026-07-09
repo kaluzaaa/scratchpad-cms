@@ -88,28 +88,17 @@ export type EpisodeEvent =
 ////////// State
 /////////////////////////////////////////
 
+// Slim write model: only what invariants read. Full episode data lives in
+// the events (history) and the Pongo document (serving).
 export type Episode =
   | { status: "NotCreated" }
   | {
       status: "Created";
-      episode_number: number;
-      title: string;
-      episode_date: string;
-      intro?: string;
-      link_notes?: string;
-      newsletter?: string;
-      summarization?: string;
-      yt_chapters?: string;
-      meta_seo?: unknown;
-      duration_ms?: number;
-      spotify_id?: string;
-      apple_url?: string;
-      youtube_id?: string;
-      spreaker_id?: string;
-      audio_url?: string;
-      teaser_video_url?: string;
-      discord_send?: boolean;
-      is_published: boolean;
+      episode_number: number; // read by requiredForPublication
+      episode_date: string; // read by requiredForPublication
+      has_intro: boolean; // presence flag replaces stored content
+      has_spreaker_id: boolean; // presence flag replaces stored content
+      is_published: boolean; // the phase marker (no Draft types by decision)
       transcript_reviewed: boolean;
       last_published_at?: string;
     };
@@ -127,16 +116,37 @@ export const evolve = (state: Episode, event: EpisodeEvent): Episode => {
     case "EpisodeCreated":
       return {
         status: "Created",
-        ...data,
+        episode_number: data.episode_number,
+        episode_date: data.episode_date,
+        has_intro: false,
+        has_spreaker_id: false,
         is_published: false,
         transcript_reviewed: false,
       };
-    case "EpisodeContentUpdated":
+    case "EpisodeContentUpdated": {
+      if (state.status !== "Created") return state;
+
+      // Only the invariant inputs; a present key sets OR clears the flag.
+      return {
+        ...state,
+        episode_date: data.episode_date ?? state.episode_date,
+        has_intro:
+          data.intro !== undefined
+            ? typeof data.intro === "string" && data.intro.length > 0
+            : state.has_intro,
+      };
+    }
     case "EpisodeDistributionUpdated": {
       if (state.status !== "Created") return state;
 
-      // Event data carries only the changed keys, so a shallow merge suffices.
-      return { ...state, ...data };
+      return {
+        ...state,
+        has_spreaker_id:
+          data.spreaker_id !== undefined
+            ? typeof data.spreaker_id === "string" &&
+              data.spreaker_id.length > 0
+            : state.has_spreaker_id,
+      };
     }
     case "TranscriptDraftImported":
       // Milestone with no invariant impact; transcript lives in the read model.

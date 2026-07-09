@@ -110,10 +110,11 @@ export const requiredForPublication = (state: Episode): string[] =>
     : [
         // number & date are structurally guaranteed by creation, listed
         // for domain fidelity; intro & spreaker_id are the effective gate
+        // (presence flags; the contract still names the missing FIELDS)
         !state.episode_number && "episode_number",
         !state.episode_date && "episode_date",
-        !state.intro && "intro",
-        !state.spreaker_id && "spreaker_id",
+        !state.has_intro && "intro",
+        !state.has_spreaker_id && "spreaker_id",
       ].filter((f): f is string => Boolean(f));
 
 export const decide = (

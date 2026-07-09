@@ -1,23 +1,23 @@
 import type { ReadEvent } from "@event-driven-io/emmett";
 import { defaultTag, messagesTable } from "@event-driven-io/emmett-sqlite";
+import type { EpisodeEvent } from "./episode";
 import {
-  type Episode,
-  type EpisodeEvent,
-  evolve,
-  initialState,
-} from "./episode";
+  type EpisodeDocument,
+  emptyDocument,
+  evolveDocument,
+} from "./readModel";
 
-type CreatedEpisode = Extract<Episode, { status: "Created" }>;
-type EpisodeFieldKey = Exclude<keyof CreatedEpisode, "status">;
+// History is a read-side concern: it replays the read-model document (full
+// data), not the slim aggregate, so the per-field audit diff sees everything.
+type EpisodeFieldKey = Exclude<keyof EpisodeDocument, "_id" | "podcast_id">;
 
-// All auditable episode fields (state keys minus the `status` discriminator);
-// `satisfies` keeps every entry a valid state key. `transcript` is absent
-// because the aggregate no longer stores it; Task 8 restores full-data diffs
-// by switching history to the read-model document evolve.
+// All auditable episode fields (document keys minus the `_id`/`podcast_id`
+// identity keys); `satisfies` keeps every entry a valid document key.
 const FIELDS = [
   "episode_number",
   "title",
   "intro",
+  "transcript",
   "episode_date",
   "link_notes",
   "newsletter",
@@ -77,8 +77,12 @@ export const readRecordedTimestamps = async (
   );
 };
 
-const fieldValue = (state: Episode, field: EpisodeFieldKey): unknown =>
-  state.status === "Created" ? state[field] : undefined;
+// Documents have no status discriminator: before the first event there is no
+// document yet, so every field reads as undefined (diffs behave as before).
+const fieldValue = (
+  doc: EpisodeDocument | undefined,
+  field: EpisodeFieldKey,
+): unknown => doc?.[field];
 
 // JSON.stringify equality covers the `meta_seo` blob too (KISS);
 // unset fields stringify to undefined on both sides, so they compare equal.
@@ -92,10 +96,10 @@ export const buildHistory = (
   recordedAt: Map<string, string>,
 ): HistoryEntry[] => {
   const entries: HistoryEntry[] = [];
-  let state = initialState();
+  let state: EpisodeDocument | undefined;
 
   for (const event of events) {
-    const next = evolve(state, event);
+    const next = evolveDocument(state ?? emptyDocument(), event);
 
     const changes: FieldChange[] = [];
     for (const field of FIELDS) {
