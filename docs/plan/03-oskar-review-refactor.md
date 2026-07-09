@@ -456,4 +456,4 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
 - [x] Task 7: two-stage transcript import events + routes; transcript removed from content PATCH
 - [x] Task 8: slim aggregate to invariant flags; history switches to read-model evolve
 - [x] Task 9: `ApiSpecification` HTTP-layer tests (`api.spec.ts`)
-- [ ] Task 10: README refresh + finalize PR body (traceability table) + `gh pr ready`
+- [x] Task 10: README refresh + finalize PR body (traceability table) + `gh pr ready`

@@ -1,6 +1,6 @@
 # Podcast CMS — Event Sourcing Demo (Emmett + Hono + Cloudflare D1)
 
-A demo API for managing podcast episodes, built as an event-sourced "hello world" with [Emmett](https://github.com/event-driven-io/emmett)'s decider pattern. The event store runs on Cloudflare D1 (`d1EventStoreDriver` from `@event-driven-io/emmett-sqlite/cloudflare`), HTTP via [Hono](https://hono.dev), executed in workerd through `wrangler dev` (local D1 persisted as SQLite under `.wrangler/state/`). The same code deploys unchanged to Cloudflare Workers + D1.
+A demo API for managing podcast episodes, built as an event-sourced "hello world" with [Emmett](https://github.com/event-driven-io/emmett)'s decider pattern. The event store runs on Cloudflare D1 (`d1EventStoreDriver` from `@event-driven-io/emmett-sqlite/cloudflare`), the read model is a [Pongo](https://event-driven-io.github.io/Pongo/) document collection on the same D1 database, HTTP via [Hono](https://hono.dev), executed in workerd through `wrangler dev` (local D1 persisted as SQLite under `.wrangler/state/`). The same code deploys unchanged to Cloudflare Workers + D1.
 
 ## Plans
 
@@ -8,6 +8,7 @@ A demo API for managing podcast episodes, built as an event-sourced "hello world
 |---|---|
 | [01 — Podcast CMS on Emmett + D1](docs/plan/01-podcast-cms-emmett-d1.md) | The event-sourced podcast CMS demo: Emmett event store on Cloudflare D1, Hono API with five business-grouped events, BDD red-green TDD, `X-User` header auth, audit history endpoint, and a list read model. |
 | [02 — Idiomatic Hono auth errors](docs/plan/02-idiomatic-hono-auth-errors.md) | Refactored the auth middleware error paths to the Hono idiom — thrown `HTTPException`s — and unified all error responses as RFC 7807 `problem+json` via a shared `onError` handler. |
+| [03 — Oskar review refactor](docs/plan/03-oskar-review-refactor.md) | Applied Oskar Dudycz's review: explicit business ids in event data, metadata without `now`, inline event payloads, a hard publication gate, a Pongo read model on D1, two-stage transcript import, a slim aggregate, and Emmett `ApiSpecification` HTTP-layer tests. |
 
 ## Event catalog
 
@@ -15,14 +16,14 @@ Six events, grouped by why they happen rather than what field they touch:
 
 | Event | Data | Grouping rationale |
 |---|---|---|
-| `EpisodeCreated` | `{ episode_number, title, episode_date }` | Birth of the stream; the required identity fields. |
+| `EpisodeCreated` | `{ podcast_id, episode_number, title, episode_date }` | Birth of the stream; the required identity fields. Business ids are explicit in the data, never derived from the stream id. |
 | `EpisodeContentUpdated` | `Partial<{ title, intro, episode_date, link_notes, newsletter, summarization, yt_chapters, meta_seo, duration_ms }>` | One editorial action; only the keys actually changed are present. |
 | `TranscriptDraftImported` | `{ podcast_id, episode_number, transcript }` | HappyScribe draft transcript import; does not mark the transcript reviewed. |
 | `ReviewedTranscriptImported` | `{ podcast_id, episode_number, transcript }` | Reviewed import (proofreader's email) overwriting the same field; sets the `transcript_reviewed` flag, which gates transcript publication — not episode publication. |
-| `EpisodePublished` | `{ published_at }` | Repeatable publish log; each publish appends a new event and advances `last_published_at`. |
+| `EpisodePublished` | `{ published_at }` | Repeatable publish log; each publish appends a new event and advances `last_published_at`. `published_at` is a server-generated business fact passed as command data (not metadata). |
 | `EpisodeDistributionUpdated` | `Partial<{ spotify_id, apple_url, youtube_id, spreaker_id, audio_url, teaser_video_url, discord_send }>` | Platform-sync concern, separate from editorial content; partial like content. |
 
-**Metadata on every event:** `{ user, reason?, now }` — `user` from the `X-User` header, `reason` from the optional `X-Reason` header, `now` as an ISO 8601 timestamp.
+**Metadata on every event:** `{ user, reason? }` — `user` from the `X-User` header, `reason` from the optional `X-Reason` header (the key is present only when the header was sent). There is no timestamp in metadata — the event store records the time itself, and the history endpoint reads that recorded time.
 
 **Why `X-Reason` is a header, not a body field:** it works uniformly across bodyless commands (publish) and keeps PATCH bodies pure — "present keys = changed fields" with no reserved meta keys. It is also a natural place for future AI agents to explain themselves.
 
@@ -71,9 +72,9 @@ All routes are prefixed `/podcasts/:podcastId`. Errors are `application/problem+
 | POST | `/podcasts/:p/episodes/:n/transcript/draft` | RW | 204 | 400 invalid body, 404 not created |
 | POST | `/podcasts/:p/episodes/:n/transcript/reviewed` | RW | 204 | 400 invalid body, 404 not created |
 | POST | `/podcasts/:p/episodes/:n/publish` | RW | 204 (repeatable) | 400 missing required fields, 404 not created |
-| GET | `/podcasts/:p/episodes/:n` | RO | 200 state + weak ETag | 404 |
+| GET | `/podcasts/:p/episodes/:n` | RO | 200 episode document + weak ETag | 404 |
 | GET | `/podcasts/:p/episodes/:n/history` | RO | 200 audit trail | 404 |
-| GET | `/podcasts/:p/episodes` | RO | 200 read-model list | — |
+| GET | `/podcasts/:p/episodes` | RO | 200 document list | — |
 
 Plus auth errors on every route: 401 / 403 / 404 as per the check order above. Error mapping: `ValidationError` → 400, `IllegalStateError` → 403, `NotFoundError` → 404; version conflicts (duplicate create) are remapped from emmett's default 412 to **409**.
 
@@ -93,22 +94,22 @@ curl -i -X POST localhost:8787/podcasts/podcast-a/episodes \
 curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
   -H 'X-User: alice' -H 'X-Reason: editorial pass' -H 'Content-Type: application/json' \
   -d '{"duration_ms": 3600000, "intro": "Welcome!"}'                                          # 204
+curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/distribution \
+  -H 'X-User: alice' -H 'Content-Type: application/json' \
+  -d '{"spotify_id": "sp-123", "spreaker_id": "spr-42"}'                                      # 204
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/transcript/draft \
   -H 'X-User: alice' -H 'Content-Type: application/json' \
   -d '{"transcript": "draft from HappyScribe..."}'                                            # 204
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/transcript/reviewed \
   -H 'X-User: alice' -H 'Content-Type: application/json' \
   -d '{"transcript": "reviewed by the proofreader..."}'                                       # 204 (overwrites the draft)
-curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/distribution \
-  -H 'X-User: alice' -H 'Content-Type: application/json' \
-  -d '{"spotify_id": "sp-123", "spreaker_id": "spr-42"}'                                      # 204
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/publish -H 'X-User: alice' \
   -H 'X-Reason: initial release'                                                              # 204 (400 before intro+spreaker_id set)
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/publish -H 'X-User: alice' \
   -H 'X-Reason: republish after fix'                                                          # 204 (repeatable)
 
 # reads
-curl -s localhost:8787/podcasts/podcast-a/episodes/42 -H 'X-User: alice'          # 200 state
+curl -s localhost:8787/podcasts/podcast-a/episodes/42 -H 'X-User: alice'          # 200 document
 curl -s localhost:8787/podcasts/podcast-a/episodes/42/history -H 'X-User: alice'  # 200 audit
 curl -s localhost:8787/podcasts/podcast-a/episodes -H 'X-User: alice'             # 200 list
 
@@ -130,7 +131,7 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
 
 ## History endpoint — sample output
 
-`GET /podcasts/podcast-a/episodes/42/history` replays the stream and diffs the state before/after each event into per-field changes (trimmed):
+`GET /podcasts/podcast-a/episodes/42/history` replays the stream through the read-model document evolve (full data, not the slim aggregate) and diffs the document before/after each event into per-field changes. `timestamp` is the event store's recorded time (its `created` column) — there is no timestamp in event metadata. Trimmed sample:
 
 ```json
 {
@@ -141,7 +142,7 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
       "type": "EpisodeCreated",
       "user": "alice",
       "reason": "initial import",
-      "timestamp": "2026-07-08T11:04:34.481Z",
+      "timestamp": "2026-07-08T11:04:34Z",
       "changes": [
         { "field": "episode_number", "before": null, "after": 42 },
         { "field": "title", "before": null, "after": "Event Sourcing 101" },
@@ -155,7 +156,7 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
       "type": "EpisodePublished",
       "user": "alice",
       "reason": "initial release",
-      "timestamp": "2026-07-08T11:05:02.113Z",
+      "timestamp": "2026-07-08T11:05:02Z",
       "changes": [
         { "field": "is_published", "before": false, "after": true },
         { "field": "last_published_at", "before": null, "after": "2026-07-08T11:05:02.113Z" }
@@ -165,9 +166,11 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
 }
 ```
 
-## Read model caveat
+## Write model vs read model
 
-The `episodes` Pongo collection (backing both `GET /podcasts/:p/episodes` and `GET /podcasts/:p/episodes/:n`) is an **inline projection** ([`pongoSingleStreamProjection`](https://event-driven-io.github.io/Pongo/)) — the collection table is auto-created on schema migration (no hand-written DDL) and updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
+The aggregate (write model) is **slim** — it holds only what the invariants read: `episode_number`, `episode_date`, the presence flags `has_intro` / `has_spreaker_id` (the effective publish gate), `is_published`, `transcript_reviewed`, and `last_published_at`. Full episode data lives in the events and in the [Pongo](https://event-driven-io.github.io/Pongo/) `episodes` collection: one document per episode (`_id` = stream id) that backs both `GET /podcasts/:p/episodes` and `GET /podcasts/:p/episodes/:n` (ETag from the document `_version`). The history endpoint replays the same document evolve, so the audit diff sees the full data too.
+
+The collection is maintained by an **inline projection** (mirroring emmett's `pongoSingleStreamProjection` semantics — see the D1-driver workaround note in `src/episodes/readModel.ts`): the collection table is auto-created on schema migration (no hand-written DDL) and updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
 
 ```bash
 rm -rf .wrangler/state
