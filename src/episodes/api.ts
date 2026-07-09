@@ -10,12 +10,9 @@ import { requireAccess } from "../auth/middleware";
 import type { Env, Variables } from "../env";
 import { decide, type EpisodeCommand } from "./businessLogic";
 import {
-  EPISODE_CONTENT_FIELD_KEYS,
-  EPISODE_DISTRIBUTION_FIELD_KEYS,
   type Episode,
-  type EpisodeContentFields,
-  type EpisodeCreationFields,
-  type EpisodeDistributionFields,
+  type EpisodeContentUpdated,
+  type EpisodeDistributionUpdated,
   type EpisodeEvent,
   type EpisodeEventMetadata,
   episodeStreamId,
@@ -28,6 +25,32 @@ type AppEnv = { Bindings: Env; Variables: Variables };
 type AppContext = Context<AppEnv>;
 
 const handle = CommandHandler({ evolve, initialState });
+
+// Runtime whitelists for API body filtering (this is their only consumer);
+// `satisfies` keeps every entry a valid key of the inline event payload.
+const EPISODE_CONTENT_FIELD_KEYS = [
+  "title",
+  "intro",
+  "transcript",
+  "episode_date",
+  "link_notes",
+  "newsletter",
+  "summarization",
+  "yt_chapters",
+  "meta_seo",
+  "duration_ms",
+] as const satisfies readonly (keyof EpisodeContentUpdated["data"] & string)[];
+
+const EPISODE_DISTRIBUTION_FIELD_KEYS = [
+  "spotify_id",
+  "apple_url",
+  "youtube_id",
+  "spreaker_id",
+  "audio_url",
+  "teaser_video_url",
+  "discord_send",
+] as const satisfies readonly (keyof EpisodeDistributionUpdated["data"] &
+  string)[];
 
 /////////////////////////////////////////
 ////////// Request parsing helpers
@@ -76,7 +99,7 @@ const episodeStreamIdFromParams = (c: AppContext): string =>
 
 const parseCreationFields = (
   body: Record<string, unknown>,
-): EpisodeCreationFields => {
+): { episode_number: number; title: string; episode_date: string } => {
   const { episode_number, title, episode_date } = body;
   if (
     typeof episode_number !== "number" ||
@@ -148,7 +171,7 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     requireAccess("RW"),
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
-      const data = pickPresentKeys<EpisodeContentFields>(
+      const data = pickPresentKeys<EpisodeContentUpdated["data"]>(
         await readJsonObject(c),
         EPISODE_CONTENT_FIELD_KEYS,
       );
@@ -169,7 +192,7 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     requireAccess("RW"),
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
-      const data = pickPresentKeys<EpisodeDistributionFields>(
+      const data = pickPresentKeys<EpisodeDistributionUpdated["data"]>(
         await readJsonObject(c),
         EPISODE_DISTRIBUTION_FIELD_KEYS,
       );

@@ -4,28 +4,40 @@ import {
   NotFoundError,
   ValidationError,
 } from "@event-driven-io/emmett";
-import type {
-  Episode,
-  EpisodeContentFields,
-  EpisodeCreationFields,
-  EpisodeDistributionFields,
-  EpisodeEvent,
-  EpisodeEventMetadata,
-} from "./episode";
+import type { Episode, EpisodeEvent, EpisodeEventMetadata } from "./episode";
 
 /////////////////////////////////////////
 ////////// Commands
 /////////////////////////////////////////
 
+// Command payloads mirror the event payloads inline; duplication between the
+// two lists is accepted by design (see episode.ts).
+
 export type CreateEpisode = Command<
   "CreateEpisode",
-  EpisodeCreationFields & { podcast_id: string },
+  {
+    podcast_id: string;
+    episode_number: number;
+    title: string;
+    episode_date: string;
+  },
   EpisodeEventMetadata
 >;
 
 export type UpdateEpisodeContent = Command<
   "UpdateEpisodeContent",
-  EpisodeContentFields,
+  Partial<{
+    title: string;
+    intro: string;
+    transcript: string;
+    episode_date: string;
+    link_notes: string;
+    newsletter: string;
+    summarization: string;
+    yt_chapters: string;
+    meta_seo: unknown;
+    duration_ms: number;
+  }>,
   EpisodeEventMetadata
 >;
 
@@ -44,7 +56,15 @@ export type PublishEpisode = Command<
 
 export type UpdateEpisodeDistribution = Command<
   "UpdateEpisodeDistribution",
-  EpisodeDistributionFields,
+  Partial<{
+    spotify_id: string;
+    apple_url: string;
+    youtube_id: string;
+    spreaker_id: string;
+    audio_url: string;
+    teaser_video_url: string;
+    discord_send: boolean;
+  }>,
   EpisodeEventMetadata
 >;
 

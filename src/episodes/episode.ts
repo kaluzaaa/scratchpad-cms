@@ -9,71 +9,36 @@ export type EpisodeEventMetadata = {
   reason?: string;
 };
 
-// Shared field groups (single source of truth for events, commands, and state)
-
-export type EpisodeCreationFields = {
-  episode_number: number;
-  title: string;
-  episode_date: string;
-};
-
-export type EpisodeContentFields = Partial<{
-  title: string;
-  intro: string;
-  transcript: string;
-  episode_date: string;
-  link_notes: string;
-  newsletter: string;
-  summarization: string;
-  yt_chapters: string;
-  meta_seo: unknown;
-  duration_ms: number;
-}>;
-
-export type EpisodeDistributionFields = Partial<{
-  spotify_id: string;
-  apple_url: string;
-  youtube_id: string;
-  spreaker_id: string;
-  audio_url: string;
-  teaser_video_url: string;
-  discord_send: boolean;
-}>;
-
-// Runtime whitelists for API body filtering; `satisfies` keeps every entry a
-// valid key of the corresponding field type (shared single source of truth).
-export const EPISODE_CONTENT_FIELD_KEYS = [
-  "title",
-  "intro",
-  "transcript",
-  "episode_date",
-  "link_notes",
-  "newsletter",
-  "summarization",
-  "yt_chapters",
-  "meta_seo",
-  "duration_ms",
-] as const satisfies readonly (keyof EpisodeContentFields)[];
-
-export const EPISODE_DISTRIBUTION_FIELD_KEYS = [
-  "spotify_id",
-  "apple_url",
-  "youtube_id",
-  "spreaker_id",
-  "audio_url",
-  "teaser_video_url",
-  "discord_send",
-] as const satisfies readonly (keyof EpisodeDistributionFields)[];
+// Each event declares its payload inline; duplication between event, command,
+// and state field lists is accepted by design (the publication invariant cuts
+// across any grouping, so shared field-group types would match reuse, not the
+// domain).
 
 export type EpisodeCreated = Event<
   "EpisodeCreated",
-  EpisodeCreationFields & { podcast_id: string },
+  {
+    podcast_id: string; // explicit business id, not derived from the stream id
+    episode_number: number;
+    title: string;
+    episode_date: string;
+  },
   EpisodeEventMetadata
 >;
 
 export type EpisodeContentUpdated = Event<
   "EpisodeContentUpdated",
-  EpisodeContentFields,
+  Partial<{
+    title: string;
+    intro: string;
+    transcript: string;
+    episode_date: string;
+    link_notes: string;
+    newsletter: string;
+    summarization: string;
+    yt_chapters: string;
+    meta_seo: unknown;
+    duration_ms: number;
+  }>,
   EpisodeEventMetadata
 >;
 
@@ -91,7 +56,15 @@ export type EpisodePublished = Event<
 
 export type EpisodeDistributionUpdated = Event<
   "EpisodeDistributionUpdated",
-  EpisodeDistributionFields,
+  Partial<{
+    spotify_id: string;
+    apple_url: string;
+    youtube_id: string;
+    spreaker_id: string;
+    audio_url: string;
+    teaser_video_url: string;
+    discord_send: boolean;
+  }>,
   EpisodeEventMetadata
 >;
 
@@ -108,14 +81,30 @@ export type EpisodeEvent =
 
 export type Episode =
   | { status: "NotCreated" }
-  | ({
+  | {
       status: "Created";
+      episode_number: number;
+      title: string;
+      episode_date: string;
+      intro?: string;
+      transcript?: string;
+      link_notes?: string;
+      newsletter?: string;
+      summarization?: string;
+      yt_chapters?: string;
+      meta_seo?: unknown;
+      duration_ms?: number;
+      spotify_id?: string;
+      apple_url?: string;
+      youtube_id?: string;
+      spreaker_id?: string;
+      audio_url?: string;
+      teaser_video_url?: string;
+      discord_send?: boolean;
       is_published: boolean;
       transcript_reviewed: boolean;
       last_published_at?: string;
-    } & EpisodeCreationFields &
-      Omit<EpisodeContentFields, keyof EpisodeCreationFields> &
-      EpisodeDistributionFields);
+    };
 
 export const initialState = (): Episode => ({ status: "NotCreated" });
 

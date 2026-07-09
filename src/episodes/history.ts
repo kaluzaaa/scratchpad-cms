@@ -1,8 +1,6 @@
 import type { ReadEvent } from "@event-driven-io/emmett";
 import { defaultTag, messagesTable } from "@event-driven-io/emmett-sqlite";
 import {
-  EPISODE_CONTENT_FIELD_KEYS,
-  EPISODE_DISTRIBUTION_FIELD_KEYS,
   type Episode,
   type EpisodeEvent,
   evolve,
@@ -12,12 +10,27 @@ import {
 type CreatedEpisode = Extract<Episode, { status: "Created" }>;
 type EpisodeFieldKey = Exclude<keyof CreatedEpisode, "status">;
 
-// All auditable episode fields (state keys minus the `status` discriminator),
-// derived from the existing runtime whitelists plus creation/flag fields.
+// All auditable episode fields (state keys minus the `status` discriminator);
+// `satisfies` keeps every entry a valid state key.
 const FIELDS = [
   "episode_number",
-  ...EPISODE_CONTENT_FIELD_KEYS,
-  ...EPISODE_DISTRIBUTION_FIELD_KEYS,
+  "title",
+  "intro",
+  "transcript",
+  "episode_date",
+  "link_notes",
+  "newsletter",
+  "summarization",
+  "yt_chapters",
+  "meta_seo",
+  "duration_ms",
+  "spotify_id",
+  "apple_url",
+  "youtube_id",
+  "spreaker_id",
+  "audio_url",
+  "teaser_video_url",
+  "discord_send",
   "is_published",
   "transcript_reviewed",
   "last_published_at",
