@@ -96,6 +96,20 @@ const ensureNotEmpty = (data: Record<string, unknown>): void => {
     throw new ValidationError("Update must contain at least one field");
 };
 
+// Hard publication gate; exported so a future advisory readiness check reuses
+// the exact same rule and cannot drift from it.
+export const requiredForPublication = (state: Episode): string[] =>
+  state.status !== "Created"
+    ? ["episode"]
+    : [
+        // number & date are structurally guaranteed by creation, listed
+        // for domain fidelity; intro & spreaker_id are the effective gate
+        !state.episode_number && "episode_number",
+        !state.episode_date && "episode_date",
+        !state.intro && "intro",
+        !state.spreaker_id && "spreaker_id",
+      ].filter((f): f is string => Boolean(f));
+
 export const decide = (
   command: EpisodeCommand,
   state: Episode,
@@ -144,6 +158,12 @@ export const decide = (
     }
     case "PublishEpisode": {
       ensureCreated(state);
+
+      const missing = requiredForPublication(state);
+      if (missing.length > 0)
+        throw new ValidationError(
+          `Cannot publish, missing required fields: ${missing.join(", ")}`,
+        );
 
       return {
         type: "EpisodePublished",

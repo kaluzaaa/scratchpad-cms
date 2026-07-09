@@ -68,12 +68,14 @@ All routes are prefixed `/podcasts/:podcastId`. Errors are `application/problem+
 | PATCH | `/podcasts/:p/episodes/:n/content` | RW | 204 + weak ETag | 400 empty update, 404 not created |
 | PATCH | `/podcasts/:p/episodes/:n/distribution` | RW | 204 + weak ETag | 400 empty update, 404 not created |
 | POST | `/podcasts/:p/episodes/:n/transcript/review` | RW | 204 | 404 not created |
-| POST | `/podcasts/:p/episodes/:n/publish` | RW | 204 (repeatable) | 404 not created |
+| POST | `/podcasts/:p/episodes/:n/publish` | RW | 204 (repeatable) | 400 missing required fields, 404 not created |
 | GET | `/podcasts/:p/episodes/:n` | RO | 200 state + weak ETag | 404 |
 | GET | `/podcasts/:p/episodes/:n/history` | RO | 200 audit trail | 404 |
 | GET | `/podcasts/:p/episodes` | RO | 200 read-model list | — |
 
 Plus auth errors on every route: 401 / 403 / 404 as per the check order above. Error mapping: `ValidationError` → 400, `IllegalStateError` → 403, `NotFoundError` → 404; version conflicts (duplicate create) are remapped from emmett's default 412 to **409**.
+
+Publish is gated: when the episode is not ready it returns 400 `application/problem+json` with `detail` listing the missing required fields (`episode_number`, `episode_date`, `intro`, `spreaker_id`).
 
 ## Curl cookbook
 
@@ -86,14 +88,15 @@ curl -i -X POST localhost:8787/podcasts/podcast-a/episodes \
   -d '{"episode_number": 42, "title": "Event Sourcing 101", "episode_date": "2026-07-01"}'   # 201
 curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
   -H 'X-User: alice' -H 'X-Reason: added transcript' -H 'Content-Type: application/json' \
-  -d '{"transcript": "hello...", "duration_ms": 3600000}'                                     # 204
+  -d '{"transcript": "hello...", "duration_ms": 3600000, "intro": "Welcome!"}'                # 204
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/transcript/review -H 'X-User: alice'  # 204
+curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/distribution \
+  -H 'X-User: alice' -H 'Content-Type: application/json' \
+  -d '{"spotify_id": "sp-123", "spreaker_id": "spr-42"}'                                      # 204
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/publish -H 'X-User: alice' \
-  -H 'X-Reason: initial release'                                                              # 204
+  -H 'X-Reason: initial release'                                                              # 204 (400 before intro+spreaker_id set)
 curl -i -X POST localhost:8787/podcasts/podcast-a/episodes/42/publish -H 'X-User: alice' \
   -H 'X-Reason: republish after fix'                                                          # 204 (repeatable)
-curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/distribution \
-  -H 'X-User: alice' -H 'Content-Type: application/json' -d '{"spotify_id": "sp-123"}'        # 204
 
 # reads
 curl -s localhost:8787/podcasts/podcast-a/episodes/42 -H 'X-User: alice'          # 200 state

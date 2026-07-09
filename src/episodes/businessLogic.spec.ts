@@ -8,7 +8,9 @@ import {
 } from "@event-driven-io/emmett";
 import { decide } from "./businessLogic";
 import {
+  type EpisodeContentUpdated,
   type EpisodeCreated,
+  type EpisodeDistributionUpdated,
   type EpisodePublished,
   evolve,
   initialState,
@@ -45,6 +47,18 @@ const episodeCreated: EpisodeCreated = {
 const transcriptReviewed: TranscriptReviewed = {
   type: "TranscriptReviewed",
   data: {},
+  metadata,
+};
+
+const introSet: EpisodeContentUpdated = {
+  type: "EpisodeContentUpdated",
+  data: { intro: "Welcome back!" },
+  metadata,
+};
+
+const spreakerIdSet: EpisodeDistributionUpdated = {
+  type: "EpisodeDistributionUpdated",
+  data: { spreaker_id: "spr-42" },
   metadata,
 };
 
@@ -167,8 +181,8 @@ void describe("Episode decider", () => {
   });
 
   void describe("PublishEpisode", () => {
-    void it("publishes with published_at taken from the command data", () => {
-      given([episodeCreated])
+    void it("publishes once intro and spreaker_id were set, with published_at taken from the command data", () => {
+      given([episodeCreated, introSet, spreakerIdSet])
         .when({ type: "PublishEpisode", data: { published_at }, metadata })
         .then([{ type: "EpisodePublished", data: { published_at }, metadata }]);
     });
@@ -179,8 +193,40 @@ void describe("Episode decider", () => {
         .thenThrows(NotFoundError);
     });
 
+    void it("rejects publishing when intro is missing", () => {
+      given([episodeCreated, spreakerIdSet])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .thenThrows(
+          (error: Error) =>
+            error instanceof ValidationError &&
+            error.message === "Cannot publish, missing required fields: intro",
+        );
+    });
+
+    void it("rejects publishing when spreaker_id is missing", () => {
+      given([episodeCreated, introSet])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .thenThrows(
+          (error: Error) =>
+            error instanceof ValidationError &&
+            error.message ===
+              "Cannot publish, missing required fields: spreaker_id",
+        );
+    });
+
+    void it("rejects publishing listing both missing fields when neither is set", () => {
+      given([episodeCreated])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .thenThrows(
+          (error: Error) =>
+            error instanceof ValidationError &&
+            error.message ===
+              "Cannot publish, missing required fields: intro, spreaker_id",
+        );
+    });
+
     void it("allows repeated publish, each appending its own published_at", () => {
-      given([episodeCreated, episodePublished])
+      given([episodeCreated, introSet, spreakerIdSet, episodePublished])
         .when({
           type: "PublishEpisode",
           data: { published_at: published_at2 },
