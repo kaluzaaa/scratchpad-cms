@@ -416,6 +416,13 @@ pattern from emmett's own `SQLiteEventStore.d1.e2e.spec.ts`).
 - README: three test layers documented; precise D1 batch-atomicity guarantees
   note in the read-model section.
 
+### Task 13 — Upgrade to betas with the apostrophe fix, restore regression fixture
+- Upstream merged the bound-object-params quote-escaping fix (Pongo #192) and
+  the broader special-characters rework (#191), published as pongo
+  `0.17.0-beta.42` / dumbo `0.13.0-beta.42` / emmett `0.43.0-beta.26`.
+- Exact pins bumped; the D1 spec fixtures carry apostrophes again, asserted
+  through GET single and the history per-field diffs.
+
 ---
 
 ## Traceability — Oskar's review comments ↔ this plan (1:1)
@@ -496,3 +503,4 @@ pattern from emmett's own `SQLiteEventStore.d1.e2e.spec.ts`).
 - [x] Task 10: README refresh + finalize PR body (traceability table) + `gh pr ready`
 - [x] Task 11: upgrade to fixed upstream betas (pongo .41 / emmett .24); revert D1 projection workaround to pongoSingleStreamProjection
 - [x] Task 12: Miniflare D1 integration specs; D1 guarantees note in README
+- [x] Task 13: bump to emmett 0.43.0-beta.26 / pongo 0.17.0-beta.42; apostrophe regression fixture restored

@@ -70,10 +70,11 @@ const creationBody = {
   title: "Event Sourcing 101",
   episode_date: "2026-07-01",
 };
-// No apostrophe on purpose: the pinned dumbo SQL formatter stores quote-doubled
-// event payloads on D1 (upstream bug, out of scope here).
-const updatedTitle = "Event Sourcing 101 (extended cut)";
-const reviewedTranscript = "reviewed transcript...";
+// Apostrophes on purpose: regression guard for the upstream bound-object-params
+// quote-escaping fix (Pongo #192 / #191). They must survive the full
+// event-at-rest -> readStream -> history path that used to corrupt them.
+const updatedTitle = "Event Sourcing 101 (Director's cut)";
+const reviewedTranscript = "Alice's reviewed transcript, isn't it...";
 
 type ProblemBody = { status: number; detail: string };
 // Over the wire the Pongo BigInt `_version` is serialized as a string.
@@ -224,12 +225,27 @@ void describe("Episodes API over real D1 (Miniflare)", () => {
       ],
     );
 
-    // Per-field diff: the content patch shows the title transition.
+    // Per-field diff: the content patch shows the title transition. The
+    // apostrophe in the new title must arrive intact (regression guard for
+    // the upstream quote-escaping fix, Pongo #192 / #191).
     const contentEntry = entries[1];
     ok(contentEntry);
     deepStrictEqual(
       contentEntry.changes.find(({ field }) => field === "title"),
       { field: "title", before: creationBody.title, after: updatedTitle },
+    );
+
+    // Same guard on the transcript path: the reviewed import diff carries
+    // the apostrophes unchanged.
+    const reviewedEntry = entries[4];
+    ok(reviewedEntry);
+    deepStrictEqual(
+      reviewedEntry.changes.find(({ field }) => field === "transcript"),
+      {
+        field: "transcript",
+        before: "draft transcript...",
+        after: reviewedTranscript,
+      },
     );
 
     // Recorded time comes from the store's messages table, not metadata.
