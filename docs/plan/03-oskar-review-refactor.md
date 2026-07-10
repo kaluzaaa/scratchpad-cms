@@ -396,6 +396,26 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
   (publish gate returns 400 not 409; duplicate create still 409), and a
   standalone check against the published dumbo error discrimination.
 
+### Task 12 — Miniflare-backed D1 integration specs
+
+**Rationale (reviewer's follow-up recommendation):** the D1 path — the inline
+Pongo projection, the GETs served from the projected document, the history
+timestamps read from `emt_messages.created` — was covered only by the manual
+wrangler-dev smoke. Oskar recommended using Miniflare directly in tests (the
+pattern from emmett's own `SQLiteEventStore.d1.e2e.spec.ts`).
+- `package.json`: `miniflare` devDependency.
+- New `src/episodes/api.d1.spec.ts`: `new Miniflare({ d1Databases: ... })` +
+  `mf.getD1Database('DB')`; the **real app** from `src/index.ts` is driven via
+  `app.request(path, init, { DB: database })` (Hono per-request env). Safe
+  despite the module-level store memoization: `node --test` isolates each spec
+  file in its own process. One sequential journey: create 201 → publish gate
+  400 (not 409) → content/distribution PATCH → draft + reviewed transcript
+  (reviewed overwrites) → publish 204 → list/single from the document (ETag
+  from `_version`, 404 unknown) → duplicate create 409 → history with
+  per-field diffs and recorded timestamps.
+- README: three test layers documented; precise D1 batch-atomicity guarantees
+  note in the read-model section.
+
 ---
 
 ## Traceability — Oskar's review comments ↔ this plan (1:1)
@@ -475,3 +495,4 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
 - [x] Task 9: `ApiSpecification` HTTP-layer tests (`api.spec.ts`)
 - [x] Task 10: README refresh + finalize PR body (traceability table) + `gh pr ready`
 - [x] Task 11: upgrade to fixed upstream betas (pongo .41 / emmett .24); revert D1 projection workaround to pongoSingleStreamProjection
+- [x] Task 12: Miniflare D1 integration specs; D1 guarantees note in README

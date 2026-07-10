@@ -36,7 +36,7 @@ npm install
 git config core.hooksPath .githooks   # activates the non-blocking pre-commit feedback hook (build/test/lint)
 
 npm run dev     # wrangler dev -> http://localhost:8787
-npm test        # BDD decider + auth middleware specs (node --import tsx --test)
+npm test        # all three test layers (node --import tsx --test), see Testing below
 npm run build   # tsc --noEmit + wrangler deploy --dry-run (proves the Worker bundles)
 npm run lint    # biome check .
 ```
@@ -166,12 +166,22 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
 }
 ```
 
+## Testing
+
+`npm test` runs three layers, all through node:test:
+
+1. **Decider units** (`businessLogic.spec.ts`) — emmett's `DeciderSpecification`: given events, when command, then events/error. Pure, no HTTP, no store.
+2. **Outside-in HTTP specs** (`api.spec.ts`) — emmett's Hono-native `ApiSpecification` drives real requests through the real stack (auth, parsing, decider, problem+json mapping) over an **in-memory** event store; command routes only.
+3. **D1 integration** (`api.d1.spec.ts`) — [Miniflare](https://miniflare.dev) provides a real D1 database in-process and the production app from `src/index.ts` runs the full episode journey against it: the inline Pongo projection, the GETs served from the projected document, and the history timestamps read from the store's messages table.
+
 ## Write model vs read model
 
 The aggregate (write model) is **slim** — it holds only what the invariants read: `episode_number`, `episode_date`, the presence flags `has_intro` / `has_spreaker_id` (the effective publish gate), `is_published`, `transcript_reviewed`, and `last_published_at`. Full episode data lives in the events and in the [Pongo](https://event-driven-io.github.io/Pongo/) `episodes` collection: one document per episode (`_id` = stream id) that backs both `GET /podcasts/:p/episodes` and `GET /podcasts/:p/episodes/:n` (ETag from the document `_version`). The history endpoint replays the same document evolve, so the audit diff sees the full data too.
 
-The collection is maintained by an **inline projection** (emmett's `pongoSingleStreamProjection`; on D1 it requires the pinned pongo >= 0.17.0-beta.41 / emmett >= 0.43.0-beta.24 stack): the collection table is auto-created on schema migration (no hand-written DDL) and updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
+The collection is maintained by an **inline projection** (emmett's `pongoSingleStreamProjection`; on D1 it requires the pinned pongo >= 0.17.0-beta.41 / emmett >= 0.43.0-beta.24 stack): the collection table is auto-created on schema migration (no hand-written DDL) and updated together with the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
 
 ```bash
 rm -rf .wrangler/state
 ```
+
+**D1 transaction guarantees, precisely:** D1 has no real SQL transactions. The emmett D1 driver simulates atomicity with a single session batch plus batch-level optimistic concurrency — an exception anywhere in the batch (e.g. a constraint violation or the no-changes guard) rolls back the WHOLE batch, so an event append and its inline projection update succeed or fail together. The residual, theoretical risk is a silent zero-row write that no guard catches; if that ever bites, the read-model document can always be rebuilt by replaying events.
