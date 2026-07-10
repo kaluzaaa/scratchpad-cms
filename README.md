@@ -170,7 +170,7 @@ curl -i -X PATCH localhost:8787/podcasts/podcast-a/episodes/42/content \
 
 The aggregate (write model) is **slim** — it holds only what the invariants read: `episode_number`, `episode_date`, the presence flags `has_intro` / `has_spreaker_id` (the effective publish gate), `is_published`, `transcript_reviewed`, and `last_published_at`. Full episode data lives in the events and in the [Pongo](https://event-driven-io.github.io/Pongo/) `episodes` collection: one document per episode (`_id` = stream id) that backs both `GET /podcasts/:p/episodes` and `GET /podcasts/:p/episodes/:n` (ETag from the document `_version`). The history endpoint replays the same document evolve, so the audit diff sees the full data too.
 
-The collection is maintained by an **inline projection** (mirroring emmett's `pongoSingleStreamProjection` semantics — see the D1-driver workaround note in `src/episodes/readModel.ts`): the collection table is auto-created on schema migration (no hand-written DDL) and updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
+The collection is maintained by an **inline projection** (emmett's `pongoSingleStreamProjection`; on D1 it requires the pinned pongo >= 0.17.0-beta.41 / emmett >= 0.43.0-beta.24 stack): the collection table is auto-created on schema migration (no hand-written DDL) and updated in the same transaction as the event append, but it does **not backfill** from events that existed before the projection was registered. Local reset (wipes ALL local data, including events):
 
 ```bash
 rm -rf .wrangler/state

@@ -379,6 +379,23 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
   out the two conscious divergences (`reason` kept; no Draft phase) with their
   rationale; `gh pr ready`.
 
+### Task 11 — Upgrade to fixed upstream betas, revert D1 projection workaround
+- Both bugs reported upstream during Task 6 are fixed and published:
+  - pongo PR #189 (`0.17.0-beta.41`): the D1 driver now spreads
+    `options.connectionOptions`, so `pongoSingleStreamProjection` works on D1.
+  - dumbo `0.13.0-beta.41`: `BatchCommandNoChangesError` got its own
+    `static ErrorType = 'BatchCommandNoChangesError'` and `ErrorCode = 409`,
+    so generic `DumboError`s no longer match emmett's version-conflict
+    predicate (no more bogus 409s masking real errors).
+- Bump `@event-driven-io/emmett*` to `0.43.0-beta.24` and
+  `@event-driven-io/pongo` to `0.17.0-beta.41` (exact pins).
+- Revert `src/episodes/readModel.ts` to the plan's original shape:
+  `pongoSingleStreamProjection` directly, dropping the manual
+  `sqliteProjection` + `pongoClient` workaround plumbing.
+- Verify: full suite + typecheck + lint + build, wrangler dev smoke
+  (publish gate returns 400 not 409; duplicate create still 409), and a
+  standalone check against the published dumbo error discrimination.
+
 ---
 
 ## Traceability — Oskar's review comments ↔ this plan (1:1)
@@ -457,3 +474,4 @@ https://event-driven.io/en/testing_event_sourcing_emmett_edition/
 - [x] Task 8: slim aggregate to invariant flags; history switches to read-model evolve
 - [x] Task 9: `ApiSpecification` HTTP-layer tests (`api.spec.ts`)
 - [x] Task 10: README refresh + finalize PR body (traceability table) + `gh pr ready`
+- [x] Task 11: upgrade to fixed upstream betas (pongo .41 / emmett .24); revert D1 projection workaround to pongoSingleStreamProjection

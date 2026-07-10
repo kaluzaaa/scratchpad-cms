@@ -1,9 +1,4 @@
-import {
-  type SQLiteProjectionHandlerContext,
-  sqliteProjection,
-} from "@event-driven-io/emmett-sqlite";
-import { type PongoClientOptions, pongoClient } from "@event-driven-io/pongo";
-import { d1Driver } from "@event-driven-io/pongo/cloudflare";
+import { pongoSingleStreamProjection } from "@event-driven-io/emmett-sqlite";
 import type { EpisodeEvent } from "./episode";
 
 // Full episode document maintained by the inline Pongo projection; serves
@@ -89,30 +84,15 @@ export const emptyDocument = (): EpisodeDocument => ({
   transcript_reviewed: false,
 });
 
-const COLLECTION_NAME = "episodes";
-
-// WORKAROUND (pongo 0.17.0-beta.40): emmett's `pongoSingleStreamProjection`
-// hands the event store's connection to the Pongo client as nested
-// `connectionOptions: { connection }`. The pg/sqlite3 Pongo drivers unpack
-// that key, but the D1 driver does not — it builds a client around
-// `database: undefined` and crashes on first use. Until fixed upstream, this
-// projection mirrors the helper's single-stream behavior via public APIs,
-// passing the ambient connection at the TOP level (which the D1 driver
-// honors), keeping the same inline (same-append) consistency.
-const pongoOnConnection = (
-  connection: SQLiteProjectionHandlerContext["connection"],
-) =>
-  pongoClient({
-    driver: d1Driver,
-    // Reuses the event store's own connection; `database` is unused at
-    // runtime when `connection` is provided, hence the cast.
-    connection,
-  } as unknown as PongoClientOptions<typeof d1Driver>);
-
-// Inline projection over the `episodes` Pongo collection; its init migrates
-// the collection schema, so the table is auto-created (no hand-written DDL).
-export const episodesProjection = sqliteProjection<EpisodeEvent>({
-  name: COLLECTION_NAME,
+// Inline projection over the `episodes` Pongo collection; the collection
+// table is auto-created via schema migration (no hand-written DDL).
+// On D1 this helper requires pongo >= 0.17.0-beta.41 (the D1 driver now
+// honors the nested `connectionOptions` the helper passes).
+export const episodesProjection = pongoSingleStreamProjection<
+  EpisodeDocument,
+  EpisodeEvent
+>({
+  collectionName: "episodes",
   canHandle: [
     "EpisodeCreated",
     "EpisodeContentUpdated",
@@ -121,27 +101,6 @@ export const episodesProjection = sqliteProjection<EpisodeEvent>({
     "EpisodePublished",
     "EpisodeDistributionUpdated",
   ],
-  handle: async (events, context) => {
-    const pongo = pongoOnConnection(context.connection);
-    try {
-      const collection = pongo
-        .db()
-        .collection<EpisodeDocument>(COLLECTION_NAME);
-      for (const event of events) {
-        await collection.handle(event.metadata.streamName, (document) =>
-          evolveDocument(document ?? emptyDocument(), event),
-        );
-      }
-    } finally {
-      await pongo.close();
-    }
-  },
-  init: async ({ context }) => {
-    const pongo = pongoOnConnection(context.connection);
-    try {
-      await pongo.db().collection(COLLECTION_NAME).schema.migrate();
-    } finally {
-      await pongo.close();
-    }
-  },
+  evolve: evolveDocument,
+  initialState: emptyDocument,
 });
