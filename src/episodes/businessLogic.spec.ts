@@ -8,11 +8,13 @@ import {
 } from "@event-driven-io/emmett";
 import { decide } from "./businessLogic";
 import {
+  type EpisodeContentUpdated,
   type EpisodeCreated,
+  type EpisodeDistributionUpdated,
   type EpisodePublished,
   evolve,
   initialState,
-  type TranscriptReviewed,
+  type TranscriptDraftImported,
 } from "./episode";
 
 const given = DeciderSpecification.for({
@@ -25,12 +27,12 @@ const given = DeciderSpecification.for({
 ////////// Fixtures
 /////////////////////////////////////////
 
-const now = "2026-07-08T10:00:00.000Z";
-const now2 = "2026-07-08T12:00:00.000Z";
-const metadata = { user: "alice", reason: "test reason", now };
-const metadata2 = { user: "alice", reason: "test reason", now: now2 };
+const published_at = "2026-07-08T10:00:00.000Z";
+const published_at2 = "2026-07-08T12:00:00.000Z";
+const metadata = { user: "alice", reason: "test reason" };
 
 const creationData = {
+  podcast_id: "patoarchitekci",
   episode_number: 42,
   title: "Event Sourcing 101",
   episode_date: "2026-07-01",
@@ -42,15 +44,38 @@ const episodeCreated: EpisodeCreated = {
   metadata,
 };
 
-const transcriptReviewed: TranscriptReviewed = {
-  type: "TranscriptReviewed",
-  data: {},
+const draftImportData = {
+  podcast_id: "patoarchitekci",
+  episode_number: 42,
+  transcript: "draft transcript...",
+};
+
+const reviewedImportData = {
+  ...draftImportData,
+  transcript: "reviewed transcript...",
+};
+
+const transcriptDraftImported: TranscriptDraftImported = {
+  type: "TranscriptDraftImported",
+  data: draftImportData,
+  metadata,
+};
+
+const introSet: EpisodeContentUpdated = {
+  type: "EpisodeContentUpdated",
+  data: { intro: "Welcome back!" },
+  metadata,
+};
+
+const spreakerIdSet: EpisodeDistributionUpdated = {
+  type: "EpisodeDistributionUpdated",
+  data: { spreaker_id: "spr-42" },
   metadata,
 };
 
 const episodePublished: EpisodePublished = {
   type: "EpisodePublished",
-  data: { published_at: now },
+  data: { published_at },
   metadata,
 };
 
@@ -75,7 +100,7 @@ void describe("Episode decider", () => {
 
   void describe("UpdateEpisodeContent", () => {
     void it("emits only the provided fields on partial update", () => {
-      const update = { transcript: "hello...", duration_ms: 3600000 };
+      const update = { link_notes: "- links...", duration_ms: 3600000 };
 
       given([episodeCreated])
         .when({ type: "UpdateEpisodeContent", data: update, metadata })
@@ -115,7 +140,7 @@ void describe("Episode decider", () => {
       given([])
         .when({
           type: "UpdateEpisodeContent",
-          data: { transcript: "hello..." },
+          data: { intro: "hello..." },
           metadata,
         })
         .thenThrows(NotFoundError);
@@ -152,50 +177,152 @@ void describe("Episode decider", () => {
     });
   });
 
-  void describe("ReviewTranscript", () => {
-    void it("marks the transcript as reviewed", () => {
+  void describe("ImportTranscriptDraft", () => {
+    void it("imports the draft transcript with full data", () => {
       given([episodeCreated])
-        .when({ type: "ReviewTranscript", data: {}, metadata })
-        .then([{ type: "TranscriptReviewed", data: {}, metadata }]);
+        .when({
+          type: "ImportTranscriptDraft",
+          data: draftImportData,
+          metadata,
+        })
+        .then([
+          { type: "TranscriptDraftImported", data: draftImportData, metadata },
+        ]);
     });
 
-    void it("allows repeated review", () => {
-      given([episodeCreated, transcriptReviewed])
-        .when({ type: "ReviewTranscript", data: {}, metadata: metadata2 })
-        .then([{ type: "TranscriptReviewed", data: {}, metadata: metadata2 }]);
+    void it("does not mark the transcript as reviewed", () => {
+      const state = [episodeCreated, transcriptDraftImported].reduce(
+        evolve,
+        initialState(),
+      );
+
+      strictEqual(state.status, "Created");
+      strictEqual(
+        state.status === "Created" && state.transcript_reviewed,
+        false,
+      );
+    });
+
+    void it("rejects importing into a not created episode", () => {
+      given([])
+        .when({
+          type: "ImportTranscriptDraft",
+          data: draftImportData,
+          metadata,
+        })
+        .thenThrows(NotFoundError);
+    });
+  });
+
+  void describe("ImportReviewedTranscript", () => {
+    void it("imports the reviewed transcript, overwriting the draft", () => {
+      given([episodeCreated, transcriptDraftImported])
+        .when({
+          type: "ImportReviewedTranscript",
+          data: reviewedImportData,
+          metadata,
+        })
+        .then([
+          {
+            type: "ReviewedTranscriptImported",
+            data: reviewedImportData,
+            metadata,
+          },
+        ]);
+    });
+
+    void it("marks the transcript as reviewed", () => {
+      const state = [
+        episodeCreated,
+        transcriptDraftImported,
+        {
+          type: "ReviewedTranscriptImported",
+          data: reviewedImportData,
+          metadata,
+        } as const,
+      ].reduce(evolve, initialState());
+
+      strictEqual(
+        state.status === "Created" && state.transcript_reviewed,
+        true,
+      );
+    });
+
+    void it("rejects importing into a not created episode", () => {
+      given([])
+        .when({
+          type: "ImportReviewedTranscript",
+          data: reviewedImportData,
+          metadata,
+        })
+        .thenThrows(NotFoundError);
     });
   });
 
   void describe("PublishEpisode", () => {
-    void it("publishes with published_at taken from command metadata now", () => {
-      given([episodeCreated])
-        .when({ type: "PublishEpisode", data: {}, metadata })
-        .then([
-          { type: "EpisodePublished", data: { published_at: now }, metadata },
-        ]);
+    void it("publishes once intro and spreaker_id were set, with published_at taken from the command data", () => {
+      given([episodeCreated, introSet, spreakerIdSet])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .then([{ type: "EpisodePublished", data: { published_at }, metadata }]);
     });
 
     void it("rejects publishing a not created episode", () => {
       given([])
-        .when({ type: "PublishEpisode", data: {}, metadata })
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
         .thenThrows(NotFoundError);
     });
 
+    void it("rejects publishing when intro is missing", () => {
+      given([episodeCreated, spreakerIdSet])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .thenThrows(
+          (error: Error) =>
+            error instanceof ValidationError &&
+            error.message === "Cannot publish, missing required fields: intro",
+        );
+    });
+
+    void it("rejects publishing when spreaker_id is missing", () => {
+      given([episodeCreated, introSet])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .thenThrows(
+          (error: Error) =>
+            error instanceof ValidationError &&
+            error.message ===
+              "Cannot publish, missing required fields: spreaker_id",
+        );
+    });
+
+    void it("rejects publishing listing both missing fields when neither is set", () => {
+      given([episodeCreated])
+        .when({ type: "PublishEpisode", data: { published_at }, metadata })
+        .thenThrows(
+          (error: Error) =>
+            error instanceof ValidationError &&
+            error.message ===
+              "Cannot publish, missing required fields: intro, spreaker_id",
+        );
+    });
+
     void it("allows repeated publish, each appending its own published_at", () => {
-      given([episodeCreated, episodePublished])
-        .when({ type: "PublishEpisode", data: {}, metadata: metadata2 })
+      given([episodeCreated, introSet, spreakerIdSet, episodePublished])
+        .when({
+          type: "PublishEpisode",
+          data: { published_at: published_at2 },
+          metadata,
+        })
         .then([
           {
             type: "EpisodePublished",
-            data: { published_at: now2 },
-            metadata: metadata2,
+            data: { published_at: published_at2 },
+            metadata,
           },
         ]);
     });
   });
 
   void describe("Metadata stamping", () => {
-    void it("stamps user, reason and now from the command metadata", () => {
+    void it("stamps user and reason from the command metadata", () => {
       given([])
         .when({ type: "CreateEpisode", data: creationData, metadata })
         .then((events) => {
@@ -205,7 +332,7 @@ void describe("Episode decider", () => {
     });
 
     void it("produces no reason when the command has none", () => {
-      const metadataWithoutReason = { user: "alice", now };
+      const metadataWithoutReason = { user: "alice" };
 
       given([])
         .when({
@@ -215,9 +342,7 @@ void describe("Episode decider", () => {
         })
         .then((events) => {
           strictEqual(events.length, 1);
-          strictEqual(events[0]?.metadata.user, "alice");
-          strictEqual(events[0]?.metadata.now, now);
-          strictEqual(events[0]?.metadata.reason, undefined);
+          deepStrictEqual(events[0]?.metadata, metadataWithoutReason);
         });
     });
   });

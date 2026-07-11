@@ -11,9 +11,10 @@
     "format": "biome check --write ."
   },
   "dependencies": {
-    "@event-driven-io/emmett": "0.43.0-beta.23",
-    "@event-driven-io/emmett-honojs": "0.43.0-beta.23",
-    "@event-driven-io/emmett-sqlite": "0.43.0-beta.23",
+    "@event-driven-io/emmett": "0.43.0-beta.26",
+    "@event-driven-io/emmett-honojs": "0.43.0-beta.26",
+    "@event-driven-io/emmett-sqlite": "0.43.0-beta.26",
+    "@event-driven-io/pongo": "0.17.0-beta.42",
     "@hono/node-server": "^1.19.9",
     "hono": "^4.11.7",
     "http-problem-details": "^0.1.7"
@@ -22,6 +23,7 @@
     "@biomejs/biome": "^2.3.3",
     "@cloudflare/workers-types": "^4.20260702.1",
     "@types/node": "^24.13.3",
+    "miniflare": "^4.20260708.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "wrangler": "~4.107.1"

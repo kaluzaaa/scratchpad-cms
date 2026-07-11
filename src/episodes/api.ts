@@ -5,29 +5,79 @@ import {
   ValidationError,
 } from "@event-driven-io/emmett";
 import { toWeakETag } from "@event-driven-io/emmett-honojs";
+import { type PongoCollection, pongoClient } from "@event-driven-io/pongo";
+import { d1Driver } from "@event-driven-io/pongo/cloudflare";
 import type { Context, Hono } from "hono";
 import { requireAccess } from "../auth/middleware";
 import type { Env, Variables } from "../env";
 import { decide, type EpisodeCommand } from "./businessLogic";
 import {
-  EPISODE_CONTENT_FIELD_KEYS,
-  EPISODE_DISTRIBUTION_FIELD_KEYS,
-  type Episode,
-  type EpisodeContentFields,
-  type EpisodeCreationFields,
-  type EpisodeDistributionFields,
+  type EpisodeContentUpdated,
+  type EpisodeDistributionUpdated,
   type EpisodeEvent,
   type EpisodeEventMetadata,
   episodeStreamId,
   evolve,
   initialState,
 } from "./episode";
-import { buildHistory } from "./history";
+import { buildHistory, readRecordedTimestamps } from "./history";
+import type { EpisodeDocument } from "./readModel";
 
 type AppEnv = { Bindings: Env; Variables: Variables };
 type AppContext = Context<AppEnv>;
 
 const handle = CommandHandler({ evolve, initialState });
+
+// Query-side Pongo client over the same D1 binding, memoized per Worker
+// isolate like `getEventStore`. Importing `d1Driver` also registers the
+// driver the inline projection resolves from the global registry.
+// `session_based` transaction mode is REQUIRED on D1.
+let episodes: PongoCollection<EpisodeDocument> | undefined;
+
+const episodesCollection = (db: D1Database): PongoCollection<EpisodeDocument> =>
+  (episodes ??= pongoClient({
+    driver: d1Driver,
+    database: db,
+    transactionOptions: { mode: "session_based" },
+  })
+    .db()
+    .collection<EpisodeDocument>("episodes"));
+
+// Pongo returns `_version` as a BigInt, which JSON cannot serialize.
+const toJsonDocument = ({
+  _version,
+  ...doc
+}: EpisodeDocument & { _version: bigint }) => ({
+  ...doc,
+  _version: _version.toString(),
+});
+
+// Runtime whitelists for API body filtering (this is their only consumer);
+// `satisfies` keeps every entry a valid key of the inline event payload.
+// `transcript` is deliberately absent: read-only in the general content PATCH,
+// written only via the transcript import routes (HappyScribe/RPC path).
+const EPISODE_CONTENT_FIELD_KEYS = [
+  "title",
+  "intro",
+  "episode_date",
+  "link_notes",
+  "newsletter",
+  "summarization",
+  "yt_chapters",
+  "meta_seo",
+  "duration_ms",
+] as const satisfies readonly (keyof EpisodeContentUpdated["data"] & string)[];
+
+const EPISODE_DISTRIBUTION_FIELD_KEYS = [
+  "spotify_id",
+  "apple_url",
+  "youtube_id",
+  "spreaker_id",
+  "audio_url",
+  "teaser_video_url",
+  "discord_send",
+] as const satisfies readonly (keyof EpisodeDistributionUpdated["data"] &
+  string)[];
 
 /////////////////////////////////////////
 ////////// Request parsing helpers
@@ -40,7 +90,6 @@ const commandMetadata = (c: AppContext): EpisodeEventMetadata => {
   return {
     user: c.get("user"),
     ...(reason !== undefined ? { reason } : {}),
-    now: new Date().toISOString(),
   };
 };
 
@@ -75,9 +124,16 @@ const episodeStreamIdFromParams = (c: AppContext): string =>
     parseEpisodeNumber(c.req.param("episodeNumber") ?? ""),
   );
 
+const parseTranscript = (body: Record<string, unknown>): string => {
+  const { transcript } = body;
+  if (typeof transcript !== "string" || transcript.length === 0)
+    throw new ValidationError("transcript must be a non-empty string");
+  return transcript;
+};
+
 const parseCreationFields = (
   body: Record<string, unknown>,
-): EpisodeCreationFields => {
+): { episode_number: number; title: string; episode_date: string } => {
   const { episode_number, title, episode_date } = body;
   if (
     typeof episode_number !== "number" ||
@@ -109,6 +165,26 @@ const executeCommand = (
   command: EpisodeCommand,
 ) => handle(c.get("eventStore"), streamId, (state) => decide(command, state));
 
+// Shared handler for the two transcript import routes (draft vs reviewed
+// differ only in the command type); models the HappyScribe integration path.
+const importTranscript =
+  (type: "ImportTranscriptDraft" | "ImportReviewedTranscript") =>
+  async (c: AppContext) => {
+    const podcast_id = c.req.param("podcastId") ?? "";
+    const episode_number = parseEpisodeNumber(
+      c.req.param("episodeNumber") ?? "",
+    );
+    const transcript = parseTranscript(await readJsonObject(c));
+
+    await executeCommand(c, episodeStreamId(podcast_id, episode_number), {
+      type,
+      data: { podcast_id, episode_number, transcript },
+      metadata: commandMetadata(c),
+    });
+
+    return c.body(null, 204);
+  };
+
 /////////////////////////////////////////
 ////////// Routes
 /////////////////////////////////////////
@@ -118,11 +194,14 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     "/podcasts/:podcastId/episodes",
     requireAccess("RW"),
     async (c) => {
-      const data = parseCreationFields(await readJsonObject(c));
-      const streamId = episodeStreamId(
-        c.req.param("podcastId") ?? "",
-        data.episode_number,
-      );
+      // `?? ""` only narrows the type; the auth middleware has already
+      // rejected unknown podcasts by this point.
+      const podcastId = c.req.param("podcastId") ?? "";
+      const data = {
+        ...parseCreationFields(await readJsonObject(c)),
+        podcast_id: podcastId,
+      };
+      const streamId = episodeStreamId(podcastId, data.episode_number);
 
       const result = await handle(
         c.get("eventStore"),
@@ -146,7 +225,7 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     requireAccess("RW"),
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
-      const data = pickPresentKeys<EpisodeContentFields>(
+      const data = pickPresentKeys<EpisodeContentUpdated["data"]>(
         await readJsonObject(c),
         EPISODE_CONTENT_FIELD_KEYS,
       );
@@ -167,7 +246,7 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     requireAccess("RW"),
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
-      const data = pickPresentKeys<EpisodeDistributionFields>(
+      const data = pickPresentKeys<EpisodeDistributionUpdated["data"]>(
         await readJsonObject(c),
         EPISODE_DISTRIBUTION_FIELD_KEYS,
       );
@@ -184,19 +263,15 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
   );
 
   router.post(
-    "/podcasts/:podcastId/episodes/:episodeNumber/transcript/review",
+    "/podcasts/:podcastId/episodes/:episodeNumber/transcript/draft",
     requireAccess("RW"),
-    async (c) => {
-      const streamId = episodeStreamIdFromParams(c);
+    importTranscript("ImportTranscriptDraft"),
+  );
 
-      await executeCommand(c, streamId, {
-        type: "ReviewTranscript",
-        data: {},
-        metadata: commandMetadata(c),
-      });
-
-      return c.body(null, 204);
-    },
+  router.post(
+    "/podcasts/:podcastId/episodes/:episodeNumber/transcript/reviewed",
+    requireAccess("RW"),
+    importTranscript("ImportReviewedTranscript"),
   );
 
   router.post(
@@ -205,16 +280,19 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
       const metadata = commandMetadata(c);
+      // published_at is a business fact generated server-side and passed as
+      // command data (not metadata), keeping `decide` pure.
+      const published_at = new Date().toISOString();
 
       await executeCommand(c, streamId, {
         type: "PublishEpisode",
-        data: {},
+        data: { published_at },
         metadata,
       });
 
       // Per plan: the publish action only logs (the event is the publish log).
       console.log(
-        `publish: episode ${streamId} published_at ${metadata.now} by ${metadata.user} reason ${metadata.reason ?? "-"}`,
+        `publish: episode ${streamId} published_at ${published_at} by ${metadata.user} reason ${metadata.reason ?? "-"}`,
       );
       return c.body(null, 204);
     },
@@ -224,16 +302,14 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     "/podcasts/:podcastId/episodes",
     requireAccess("RO"),
     async (c) => {
-      // Read model maintained by the inline episodes_list projection;
-      // queried straight from the D1 binding (no event store involved).
-      const { results } = await c.env.DB.prepare(
-        `SELECT stream_id, podcast_id, episode_number, title, episode_date, last_published_at
-         FROM episodes_list WHERE podcast_id = ?1 ORDER BY episode_number`,
-      )
-        .bind(c.req.param("podcastId") ?? "")
-        .all();
+      // Read model maintained by the inline `episodes` Pongo projection;
+      // queried via the query-side Pongo client (no event store involved).
+      const documents = await episodesCollection(c.env.DB).find(
+        { podcast_id: c.req.param("podcastId") ?? "" },
+        { sort: { episode_number: 1 } },
+      );
 
-      return c.json({ episodes: results }, 200);
+      return c.json({ episodes: documents.map(toJsonDocument) }, 200);
     },
   );
 
@@ -243,19 +319,16 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
     async (c) => {
       const streamId = episodeStreamIdFromParams(c);
 
-      const { state, streamExists, currentStreamVersion } = await c
-        .get("eventStore")
-        .aggregateStream<Episode, EpisodeEvent>(streamId, {
-          evolve,
-          initialState,
-        });
+      const document = await episodesCollection(c.env.DB).findOne({
+        _id: streamId,
+      });
 
       // NotFoundError -> 404 problem+json via the app-level onError mapper.
-      if (!streamExists || state.status !== "Created")
+      if (document === null)
         throw new NotFoundError({ id: streamId, type: "Episode" });
 
-      c.header("ETag", toWeakETag(currentStreamVersion));
-      return c.json(state, 200);
+      c.header("ETag", toWeakETag(document._version));
+      return c.json(toJsonDocument(document), 200);
     },
   );
 
@@ -272,7 +345,12 @@ export const episodesApi = (router: Hono<AppEnv>): void => {
       if (!streamExists || events.length === 0)
         throw new NotFoundError({ id: streamId, type: "Episode" });
 
-      return c.json({ stream_id: streamId, entries: buildHistory(events) });
+      const recordedAt = await readRecordedTimestamps(c.env.DB, streamId);
+
+      return c.json({
+        stream_id: streamId,
+        entries: buildHistory(events, recordedAt),
+      });
     },
   );
 };

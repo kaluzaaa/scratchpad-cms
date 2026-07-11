@@ -4,53 +4,80 @@ import {
   NotFoundError,
   ValidationError,
 } from "@event-driven-io/emmett";
-import type {
-  Episode,
-  EpisodeContentFields,
-  EpisodeCreationFields,
-  EpisodeDistributionFields,
-  EpisodeEvent,
-  EpisodeEventMetadata,
-} from "./episode";
+import type { Episode, EpisodeEvent, EpisodeEventMetadata } from "./episode";
 
 /////////////////////////////////////////
 ////////// Commands
 /////////////////////////////////////////
 
+// Command payloads mirror the event payloads inline; duplication between the
+// two lists is accepted by design (see episode.ts).
+
 export type CreateEpisode = Command<
   "CreateEpisode",
-  EpisodeCreationFields,
+  {
+    podcast_id: string;
+    episode_number: number;
+    title: string;
+    episode_date: string;
+  },
   EpisodeEventMetadata
 >;
 
 export type UpdateEpisodeContent = Command<
   "UpdateEpisodeContent",
-  EpisodeContentFields,
+  Partial<{
+    title: string;
+    intro: string;
+    episode_date: string;
+    link_notes: string;
+    newsletter: string;
+    summarization: string;
+    yt_chapters: string;
+    meta_seo: unknown;
+    duration_ms: number;
+  }>,
   EpisodeEventMetadata
 >;
 
-export type ReviewTranscript = Command<
-  "ReviewTranscript",
-  Record<string, never>,
+export type ImportTranscriptDraft = Command<
+  "ImportTranscriptDraft",
+  { podcast_id: string; episode_number: number; transcript: string },
+  EpisodeEventMetadata
+>;
+
+export type ImportReviewedTranscript = Command<
+  "ImportReviewedTranscript",
+  { podcast_id: string; episode_number: number; transcript: string },
   EpisodeEventMetadata
 >;
 
 export type PublishEpisode = Command<
   "PublishEpisode",
-  Record<string, never>,
+  // Server-generated business fact (command data, not metadata).
+  { published_at: string },
   EpisodeEventMetadata
 >;
 
 export type UpdateEpisodeDistribution = Command<
   "UpdateEpisodeDistribution",
-  EpisodeDistributionFields,
+  Partial<{
+    spotify_id: string;
+    apple_url: string;
+    youtube_id: string;
+    spreaker_id: string;
+    audio_url: string;
+    teaser_video_url: string;
+    discord_send: boolean;
+  }>,
   EpisodeEventMetadata
 >;
 
 export type EpisodeCommand =
   | CreateEpisode
   | UpdateEpisodeContent
-  | ReviewTranscript
+  | ImportTranscriptDraft
+  | ImportReviewedTranscript
   | PublishEpisode
   | UpdateEpisodeDistribution;
 
@@ -63,9 +90,8 @@ export type EpisodeCommand =
 const stampMetadata = ({
   user,
   reason,
-  now,
 }: EpisodeEventMetadata): EpisodeEventMetadata =>
-  reason !== undefined ? { user, reason, now } : { user, now };
+  reason !== undefined ? { user, reason } : { user };
 
 const ensureCreated = (state: Episode): void => {
   if (state.status !== "Created") throw new NotFoundError();
@@ -75,6 +101,21 @@ const ensureNotEmpty = (data: Record<string, unknown>): void => {
   if (Object.keys(data).length === 0)
     throw new ValidationError("Update must contain at least one field");
 };
+
+// Hard publication gate; exported so a future advisory readiness check reuses
+// the exact same rule and cannot drift from it.
+export const requiredForPublication = (state: Episode): string[] =>
+  state.status !== "Created"
+    ? ["episode"]
+    : [
+        // number & date are structurally guaranteed by creation, listed
+        // for domain fidelity; intro & spreaker_id are the effective gate
+        // (presence flags; the contract still names the missing FIELDS)
+        !state.episode_number && "episode_number",
+        !state.episode_date && "episode_date",
+        !state.has_intro && "intro",
+        !state.has_spreaker_id && "spreaker_id",
+      ].filter((f): f is string => Boolean(f));
 
 export const decide = (
   command: EpisodeCommand,
@@ -113,21 +154,36 @@ export const decide = (
         metadata: stampMetadata(metadata),
       };
     }
-    case "ReviewTranscript": {
+    case "ImportTranscriptDraft": {
       ensureCreated(state);
 
       return {
-        type: "TranscriptReviewed",
-        data: {},
+        type: "TranscriptDraftImported",
+        data,
+        metadata: stampMetadata(metadata),
+      };
+    }
+    case "ImportReviewedTranscript": {
+      ensureCreated(state);
+
+      return {
+        type: "ReviewedTranscriptImported",
+        data,
         metadata: stampMetadata(metadata),
       };
     }
     case "PublishEpisode": {
       ensureCreated(state);
 
+      const missing = requiredForPublication(state);
+      if (missing.length > 0)
+        throw new ValidationError(
+          `Cannot publish, missing required fields: ${missing.join(", ")}`,
+        );
+
       return {
         type: "EpisodePublished",
-        data: { published_at: metadata.now },
+        data: { published_at: data.published_at },
         metadata: stampMetadata(metadata),
       };
     }

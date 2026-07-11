@@ -7,80 +7,52 @@ import type { Event } from "@event-driven-io/emmett";
 export type EpisodeEventMetadata = {
   user: string;
   reason?: string;
-  now: string; // ISO 8601 timestamp
 };
 
-// Shared field groups (single source of truth for events, commands, and state)
-
-export type EpisodeCreationFields = {
-  episode_number: number;
-  title: string;
-  episode_date: string;
-};
-
-export type EpisodeContentFields = Partial<{
-  title: string;
-  intro: string;
-  transcript: string;
-  episode_date: string;
-  link_notes: string;
-  newsletter: string;
-  summarization: string;
-  yt_chapters: string;
-  meta_seo: unknown;
-  duration_ms: number;
-}>;
-
-export type EpisodeDistributionFields = Partial<{
-  spotify_id: string;
-  apple_url: string;
-  youtube_id: string;
-  spreaker_id: string;
-  audio_url: string;
-  teaser_video_url: string;
-  discord_send: boolean;
-}>;
-
-// Runtime whitelists for API body filtering; `satisfies` keeps every entry a
-// valid key of the corresponding field type (shared single source of truth).
-export const EPISODE_CONTENT_FIELD_KEYS = [
-  "title",
-  "intro",
-  "transcript",
-  "episode_date",
-  "link_notes",
-  "newsletter",
-  "summarization",
-  "yt_chapters",
-  "meta_seo",
-  "duration_ms",
-] as const satisfies readonly (keyof EpisodeContentFields)[];
-
-export const EPISODE_DISTRIBUTION_FIELD_KEYS = [
-  "spotify_id",
-  "apple_url",
-  "youtube_id",
-  "spreaker_id",
-  "audio_url",
-  "teaser_video_url",
-  "discord_send",
-] as const satisfies readonly (keyof EpisodeDistributionFields)[];
+// Each event declares its payload inline; duplication between event, command,
+// and state field lists is accepted by design (the publication invariant cuts
+// across any grouping, so shared field-group types would match reuse, not the
+// domain).
 
 export type EpisodeCreated = Event<
   "EpisodeCreated",
-  EpisodeCreationFields,
+  {
+    podcast_id: string; // explicit business id, not derived from the stream id
+    episode_number: number;
+    title: string;
+    episode_date: string;
+  },
   EpisodeEventMetadata
 >;
 
 export type EpisodeContentUpdated = Event<
   "EpisodeContentUpdated",
-  EpisodeContentFields,
+  Partial<{
+    title: string;
+    intro: string;
+    episode_date: string;
+    link_notes: string;
+    newsletter: string;
+    summarization: string;
+    yt_chapters: string;
+    meta_seo: unknown;
+    duration_ms: number;
+  }>,
   EpisodeEventMetadata
 >;
 
-export type TranscriptReviewed = Event<
-  "TranscriptReviewed",
-  Record<string, never>,
+// Two-stage transcript flow: a HappyScribe draft import, then a reviewed
+// import (triggered by the proofreader's email) overwriting the same field.
+// The reviewed flag gates transcript publication, not episode publication.
+export type TranscriptDraftImported = Event<
+  "TranscriptDraftImported",
+  { podcast_id: string; episode_number: number; transcript: string },
+  EpisodeEventMetadata
+>;
+
+export type ReviewedTranscriptImported = Event<
+  "ReviewedTranscriptImported",
+  { podcast_id: string; episode_number: number; transcript: string },
   EpisodeEventMetadata
 >;
 
@@ -92,14 +64,23 @@ export type EpisodePublished = Event<
 
 export type EpisodeDistributionUpdated = Event<
   "EpisodeDistributionUpdated",
-  EpisodeDistributionFields,
+  Partial<{
+    spotify_id: string;
+    apple_url: string;
+    youtube_id: string;
+    spreaker_id: string;
+    audio_url: string;
+    teaser_video_url: string;
+    discord_send: boolean;
+  }>,
   EpisodeEventMetadata
 >;
 
 export type EpisodeEvent =
   | EpisodeCreated
   | EpisodeContentUpdated
-  | TranscriptReviewed
+  | TranscriptDraftImported
+  | ReviewedTranscriptImported
   | EpisodePublished
   | EpisodeDistributionUpdated;
 
@@ -107,16 +88,20 @@ export type EpisodeEvent =
 ////////// State
 /////////////////////////////////////////
 
+// Slim write model: only what invariants read. Full episode data lives in
+// the events (history) and the Pongo document (serving).
 export type Episode =
   | { status: "NotCreated" }
-  | ({
+  | {
       status: "Created";
-      is_published: boolean;
+      episode_number: number; // read by requiredForPublication
+      episode_date: string; // read by requiredForPublication
+      has_intro: boolean; // presence flag replaces stored content
+      has_spreaker_id: boolean; // presence flag replaces stored content
+      is_published: boolean; // the phase marker (no Draft types by decision)
       transcript_reviewed: boolean;
       last_published_at?: string;
-    } & EpisodeCreationFields &
-      Omit<EpisodeContentFields, keyof EpisodeCreationFields> &
-      EpisodeDistributionFields);
+    };
 
 export const initialState = (): Episode => ({ status: "NotCreated" });
 
@@ -131,18 +116,42 @@ export const evolve = (state: Episode, event: EpisodeEvent): Episode => {
     case "EpisodeCreated":
       return {
         status: "Created",
-        ...data,
+        episode_number: data.episode_number,
+        episode_date: data.episode_date,
+        has_intro: false,
+        has_spreaker_id: false,
         is_published: false,
         transcript_reviewed: false,
       };
-    case "EpisodeContentUpdated":
+    case "EpisodeContentUpdated": {
+      if (state.status !== "Created") return state;
+
+      // Only the invariant inputs; a present key sets OR clears the flag.
+      return {
+        ...state,
+        episode_date: data.episode_date ?? state.episode_date,
+        has_intro:
+          data.intro !== undefined
+            ? typeof data.intro === "string" && data.intro.length > 0
+            : state.has_intro,
+      };
+    }
     case "EpisodeDistributionUpdated": {
       if (state.status !== "Created") return state;
 
-      // Event data carries only the changed keys, so a shallow merge suffices.
-      return { ...state, ...data };
+      return {
+        ...state,
+        has_spreaker_id:
+          data.spreaker_id !== undefined
+            ? typeof data.spreaker_id === "string" &&
+              data.spreaker_id.length > 0
+            : state.has_spreaker_id,
+      };
     }
-    case "TranscriptReviewed": {
+    case "TranscriptDraftImported":
+      // Milestone with no invariant impact; transcript lives in the read model.
+      return state;
+    case "ReviewedTranscriptImported": {
       if (state.status !== "Created") return state;
 
       return { ...state, transcript_reviewed: true };
@@ -171,15 +180,3 @@ export const episodeStreamId = (
   podcastId: string,
   episodeNumber: number,
 ): string => `episode-${podcastId}-${episodeNumber}`;
-
-// Inverse of episodeStreamId (podcast ids may contain dashes, the trailing
-// segment is always the episode number); used by the read-model projection.
-export const parseEpisodeStreamId = (
-  streamId: string,
-): { podcastId: string; episodeNumber: number } => {
-  const [, podcastId, episodeNumber] =
-    /^episode-(.+)-(\d+)$/.exec(streamId) ?? [];
-  if (podcastId === undefined || episodeNumber === undefined)
-    throw new Error(`Invalid episode stream id: '${streamId}'`);
-  return { podcastId, episodeNumber: Number(episodeNumber) };
-};
